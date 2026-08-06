@@ -1,23 +1,32 @@
-import { getRequestHeaders } from '../../../script.js';
-import { renderExtensionTemplateAsync } from '../../extensions.js';
+import { getRequestHeaders } from '/script.js';
+import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
 import {
     oai_settings,
     openai_settings,
     openai_setting_names,
     chat_completion_sources,
-} from '../../openai.js';
-import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '../../popup.js';
-import { SlashCommand } from '../../slash-commands/SlashCommand.js';
-import { SlashCommandParser } from '../../slash-commands/SlashCommandParser.js';
-import { t } from '../../i18n.js';
-import { download } from '../../utils.js';
-import { settingsToUpdate } from '../../openai.js';
+} from '/scripts/openai.js';
+import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '/scripts/popup.js';
+import { SlashCommand } from '/scripts/slash-commands/SlashCommand.js';
+import { SlashCommandParser } from '/scripts/slash-commands/SlashCommandParser.js';
+import { t } from '/scripts/i18n.js';
+import { download } from '/scripts/utils.js';
+import { settingsToUpdate } from '/scripts/openai.js';
 
 // ─────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────
 
-const EXTENSION_NAME = import.meta.url.split('/').slice(-2, -1)[0];
+let EXTENSION_NAME = 'preset-cards';
+try {
+    const url = new URL(import.meta.url);
+    const match = url.pathname.match(/\/scripts\/extensions\/(.*?)\/index\.js/);
+    if (match) EXTENSION_NAME = match[1];
+} catch (e) {
+    console.warn('preset-cards: could not determine extension path', e);
+}
+
+const EXTENSION_KEY = 'preset_cards';
 const LOGO_BASE = `/scripts/extensions/${EXTENSION_NAME}/llm-logos/`;
 
 // ---- Localization ----
