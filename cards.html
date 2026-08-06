@@ -6,6 +6,12 @@
         </div>
         <div class="preset_cards_toolbar_actions">
             <span id="preset_cards_count"></span>
+            <button id="preset_cards_clear_cache_btn" class="menu_button" title="{{i18n.clearCache}}">
+                <i class="fa-solid fa-broom"></i>
+            </button>
+            <button id="preset_cards_concise_btn" class="menu_button" title="{{i18n.conciseMode}}">
+                <i class="fa-solid fa-compress"></i>
+            </button>
             <button id="preset_cards_multiselect_btn" class="menu_button" title="{{i18n.multiSelect}}">
                 <i class="fa-solid fa-list-check"></i>
             </button>
@@ -19,8 +25,11 @@
     </div>
     <div id="preset_cards_grid">
         {{#each presets}}
-        <div class="preset_card {{#if this.isActive}}selected{{/if}}" data-preset-name="{{this.name}}"
+        <div class="preset_card {{#if this.isActive}}selected{{/if}} {{#if this.bgImage}}has_bg{{/if}}" data-preset-name="{{this.name}}"
             data-preset-index="{{this.index}}">
+            {{#if this.bgImage}}
+            <div class="preset_card_bg_image" data-bg-url="{{this.bgImage}}"></div>
+            {{/if}}
             <div class="preset_card_header">
                 <div class="batch_selection_indicator"><i class="fa-solid fa-check"></i></div>
                 <div class="preset_card_logo_wrap">

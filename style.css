@@ -63,7 +63,9 @@
 }
 
 #preset_cards_import_btn,
-#preset_cards_multiselect_btn {
+#preset_cards_multiselect_btn,
+#preset_cards_concise_btn,
+#preset_cards_clear_cache_btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -81,14 +83,17 @@
 }
 
 #preset_cards_import_btn:hover,
-#preset_cards_multiselect_btn:hover {
+#preset_cards_multiselect_btn:hover,
+#preset_cards_concise_btn:hover,
+#preset_cards_clear_cache_btn:hover {
     border-color: var(--SmartThemeQuoteColor);
     color: var(--SmartThemeQuoteColor);
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
     opacity: 1;
 }
 
-#preset_cards_multiselect_btn.active {
+#preset_cards_multiselect_btn.active,
+#preset_cards_concise_btn.active {
     border-color: var(--SmartThemeQuoteColor);
     color: var(--SmartThemeQuoteColor);
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
@@ -414,6 +419,123 @@
 
 .preset_card_tag .tag_value {
     font-weight: 600;
+}
+
+/* Concise Mode Base Styling */
+#preset_cards_container.preset_cards_concise_mode .preset_card {
+    min-height: 120px;
+    justify-content: space-between;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_logo_wrap,
+#preset_cards_container.preset_cards_concise_mode .preset_card_source_line,
+#preset_cards_container.preset_cards_concise_mode .preset_card_active_badge,
+#preset_cards_container.preset_cards_concise_mode .preset_card_actions,
+#preset_cards_container.preset_cards_concise_mode .preset_card_profiles_section,
+#preset_cards_container.preset_cards_concise_mode .preset_card_footer {
+    display: none !important;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_header {
+    padding-top: 14px;
+    padding-bottom: 2px;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_body {
+    padding-top: 0px;
+    padding-bottom: 14px;
+    flex: none;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_name {
+    position: absolute;
+    top: 14px;
+    left: 14px;
+    z-index: 2;
+    max-width: calc(100% - 28px);
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: 0.2px;
+    text-shadow: 0 4px 16px rgba(0,0,0,0.8), 0 2px 4px rgba(0,0,0,0.7) !important;
+    padding-bottom: 20px;
+    padding-right: 20px;
+    margin-bottom: -20px;
+    margin-right: -20px;
+    opacity: 0;
+    transform: translateY(-8px);
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_desc {
+    font-size: 13px;
+    line-height: 1.5;
+    -webkit-line-clamp: 1;
+    text-shadow: 0 3px 12px rgba(0,0,0,0.8), 0 1px 3px rgba(0,0,0,0.7) !important;
+    padding-bottom: 16px;
+    padding-right: 16px;
+    margin-bottom: -16px;
+    margin-right: -16px;
+    opacity: 0;
+    text-align: left;
+    width: 100%;
+    transform: translateY(8px);
+    transition: opacity 0.3s ease, transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card:hover .preset_card_name {
+    opacity: 1;
+    transform: translateY(0);
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card:hover .preset_card_desc {
+    opacity: 0.85;
+    transform: translateY(0);
+}
+
+/* Background Image Feature */
+.preset_card_bg_image {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background-size: cover;
+    background-position: center;
+    opacity: 0;
+    transition: opacity 0.3s ease, transform 0.5s ease;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.preset_card_bg_image::after {
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,0.85) 100%);
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card_bg_image {
+    opacity: 1;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card:hover .preset_card_bg_image {
+    transform: scale(1.05);
+}
+
+/* Ensure content stays above background */
+.preset_card_header, .preset_card_body, .preset_card_footer {
+    position: relative;
+    z-index: 1;
+}
+
+/* Text visibility against background */
+#preset_cards_container.preset_cards_concise_mode .preset_card.has_bg .preset_card_name,
+#preset_cards_container.preset_cards_concise_mode .preset_card.has_bg .preset_card_desc {
+    color: #ffffff;
+}
+
+#preset_cards_container.preset_cards_concise_mode .preset_card.has_bg .preset_card_chip {
+    color: rgba(255, 255, 255, 0.95);
+    background: rgba(0, 0, 0, 0.4);
+    border-color: rgba(255, 255, 255, 0.15);
+    backdrop-filter: blur(4px);
 }
 
 /* ===== Edit modal ===== */

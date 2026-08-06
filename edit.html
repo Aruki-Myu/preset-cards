@@ -5,6 +5,10 @@
         <textarea id="preset_edit_desc" placeholder="{{i18n.descPlaceholder}}">{{description}}</textarea>
     </div>
     <div class="preset_edit_field">
+        <label>{{i18n.bgImageTitle}}</label>
+        <input type="text" id="preset_edit_bg_image" placeholder="{{i18n.bgImagePlaceholder}}" value="{{bgImage}}" />
+    </div>
+    <div class="preset_edit_field">
         <label>{{i18n.modelsTitle}}</label>
         <div class="preset_edit_models_grid" id="preset_edit_models_grid">
             {{#each availableModels}}

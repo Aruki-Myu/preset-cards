@@ -52,7 +52,100 @@ const LOCAL_DICT = {
     'Export configuration': '导出配置',
     'Import configuration': '导入配置',
     'Failed to parse configuration file': '无法解析配置文件',
+    'Concise Mode': '简洁模式',
+    'No configurations saved for this preset': '该预设没有配置快照',
+    'Background Image URL': '背景图片链接',
+    'e.g., https://example.com/bg.jpg': '例如：https://example.com/bg.jpg',
+    'Clear Cache': '清理缓存',
+    'Clear all cached background images?': '确定要清理所有已缓存的背景图片吗？',
+    'Cache cleared successfully': '缓存清理成功',
 };
+
+// ─────────────────────────────────────────
+// Caching / IndexedDB
+// ─────────────────────────────────────────
+const CACHE_DB_NAME = 'PresetCardsCache';
+const CACHE_STORE_NAME = 'images';
+let cacheDb = null;
+
+function initCacheDb() {
+    return new Promise((resolve) => {
+        if (cacheDb) return resolve(cacheDb);
+        const request = indexedDB.open(CACHE_DB_NAME, 1);
+        request.onupgradeneeded = (e) => {
+            const db = e.target.result;
+            if (!db.objectStoreNames.contains(CACHE_STORE_NAME)) {
+                db.createObjectStore(CACHE_STORE_NAME);
+            }
+        };
+        request.onsuccess = (e) => {
+            cacheDb = e.target.result;
+            resolve(cacheDb);
+        };
+        request.onerror = () => {
+            console.warn('preset-cards: Failed to open IndexedDB for caching.');
+            resolve(null);
+        };
+    });
+}
+
+async function getCachedImageURL(url) {
+    if (!url) return '';
+    // Skip data URIs or local blob URIs
+    if (url.startsWith('data:') || url.startsWith('blob:')) return url;
+    
+    const db = await initCacheDb();
+    if (!db) return url;
+
+    return new Promise((resolve) => {
+        const tx = db.transaction(CACHE_STORE_NAME, 'readonly');
+        const store = tx.objectStore(CACHE_STORE_NAME);
+        const req = store.get(url);
+
+        req.onsuccess = async () => {
+            if (req.result) {
+                resolve(URL.createObjectURL(req.result));
+            } else {
+                try {
+                    const response = await fetch(url, { mode: 'cors' });
+                    if (!response.ok) throw new Error('Network response was not ok');
+                    const blob = await response.blob();
+                    
+                    const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
+                    writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
+                    
+                    resolve(URL.createObjectURL(blob));
+                } catch (err) {
+                    console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
+                    resolve(url);
+                }
+            }
+        };
+        req.onerror = () => resolve(url);
+    });
+}
+
+function applyCachedBackgrounds(container) {
+    container.find('.preset_card_bg_image').each(async function() {
+        const url = $(this).data('bg-url');
+        if (url && !$(this).css('background-image').includes('url(')) {
+            const cachedUrl = await getCachedImageURL(url);
+            $(this).css('background-image', `url('${cachedUrl}')`);
+        }
+    });
+}
+
+async function clearImageCache() {
+    const db = await initCacheDb();
+    if (!db) return;
+    return new Promise((resolve) => {
+        const tx = db.transaction(CACHE_STORE_NAME, 'readwrite');
+        const store = tx.objectStore(CACHE_STORE_NAME);
+        const req = store.clear();
+        req.onsuccess = () => resolve(true);
+        req.onerror = () => resolve(false);
+    });
+}
 
 function L(text) {
     const lang = localStorage.getItem('language') || 'en';
@@ -166,6 +259,7 @@ function readMeta(preset) {
         description: ext?.description || '',
         models: Array.isArray(ext?.models) ? ext.models : [],
         profiles: Array.isArray(ext?.profiles) ? ext.profiles : [],
+        bgImage: ext?.bgImage || '',
     };
 }
 
@@ -185,6 +279,7 @@ async function saveMeta(presetName, presetIndex, meta) {
         description: meta.description || '',
         models: meta.models || [],
         profiles: meta.profiles || [],
+        bgImage: meta.bgImage || '',
     };
 
     // Also update oai_settings if this is the current preset
@@ -269,6 +364,7 @@ function buildPresetList() {
             sourceAndModel,
             logoPath,
             description: meta.description,
+            bgImage: meta.bgImage,
             modelChips,
             profiles,
         });
@@ -291,6 +387,8 @@ function getCardsTemplateContext() {
             multiSelect: L('Multi-Select'),
             batchDelete: L('Batch Delete'),
             importPreset: L('Import Preset'),
+            conciseMode: L('Concise Mode'),
+            clearCache: L('Clear Cache'),
             configurations: L('Configurations'),
             addConfig: L('Save current state as new configuration'),
             loadConfig: L('Load configuration'),
@@ -329,11 +427,14 @@ async function openEditModal(presetName, presetIndex, onSaved) {
     const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'edit', {
         presetName,
         description: meta.description,
+        bgImage: meta.bgImage,
         availableModels,
         i18n: {
             descTitle: L('Description'),
             descPlaceholder: L('Add a short description for this preset...'),
             modelsTitle: L('Applicable Models'),
+            bgImageTitle: L('Background Image URL'),
+            bgImagePlaceholder: L('e.g., https://example.com/bg.jpg'),
         }
     });
 
@@ -353,11 +454,12 @@ async function openEditModal(presetName, presetIndex, onSaved) {
 
     // Collect values
     const newDesc = dialog.find('#preset_edit_desc').val()?.toString().trim() || '';
+    const newBgImage = dialog.find('#preset_edit_bg_image').val()?.toString().trim() || '';
     const newModels = dialog.find('.preset_edit_model_option.active').map(function () {
         return $(this).data('model-id');
     }).get();
 
-    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels });
+    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
 }
@@ -371,9 +473,15 @@ async function openPresetCards() {
     
     let isBatchMode = false;
     let batchSelectedCards = new Set();
+    let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
 
     const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
     const dialog = $(html);
+
+    if (isConciseMode) {
+        dialog.addClass('preset_cards_concise_mode');
+        dialog.find('#preset_cards_concise_btn').addClass('active');
+    }
 
     // ---- Helpers ----
     function updateCount(visible, total) {
@@ -402,8 +510,91 @@ async function openPresetCards() {
         updateCount(vis, presets.length);
     });
 
+    // ---- Long press for Concise Mode Profiles ----
+    let pressTimer;
+    let isDragging = false;
+
+    async function showConciseProfilesModal(card) {
+        const name = card.attr('data-preset-name');
+        const idx = card.data('preset-index');
+        const preset = openai_settings[idx];
+        const meta = readMeta(preset);
+        
+        if (!meta.profiles || meta.profiles.length === 0) {
+            toastr.info(L('No configurations saved for this preset'));
+            return;
+        }
+        
+        const container = $('<div class="preset_card_profiles_section" style="margin-top:0; padding:0; border:none; box-shadow:none; background:transparent;"></div>');
+        const list = $('<div class="preset_card_profiles_list"></div>');
+        
+        meta.profiles.forEach(p => {
+            const row = $(`<div class="preset_card_profile_row" data-profile-id="${p.id}" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;">
+                <div class="preset_card_profile_name" style="font-size:14px;">${p.name}</div>
+            </div>`);
+            
+            row.on('click', async function() {
+                const ext = preset.extensions;
+                Object.assign(preset, p.settings);
+                preset.extensions = ext;
+                
+                await saveMeta(name, idx, meta);
+                toastr.success(L('Configuration loaded'));
+                
+                if (oai_settings.preset_settings_openai === name) {
+                    $('#settings_preset_openai').trigger('change');
+                }
+                
+                $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
+            });
+            
+            list.append(row);
+        });
+        
+        container.append(list);
+        
+        callGenericPopup(container, POPUP_TYPE.TEXT, '', {
+            wide: false,
+            large: false,
+        });
+    }
+
+    dialog.on('mousedown touchstart', '.preset_card', function (e) {
+        if (!isConciseMode || isBatchMode) return;
+        if (e.type === 'mousedown' && e.which !== 1) return; // Only left click
+
+        isDragging = false;
+        const card = $(this);
+        
+        pressTimer = window.setTimeout(function () {
+            card.data('long-pressed', true);
+            showConciseProfilesModal(card);
+        }, 600);
+    });
+
+    dialog.on('mousemove touchmove', '.preset_card', function () {
+        isDragging = true;
+        clearTimeout(pressTimer);
+    });
+
+    dialog.on('mouseup touchend mouseleave', '.preset_card', function () {
+        clearTimeout(pressTimer);
+    });
+    
+    dialog.on('contextmenu', '.preset_card', function(e) {
+        if (isConciseMode && !isBatchMode && $(this).data('long-pressed')) {
+            e.preventDefault();
+        }
+    });
+
     // ---- Card click → switch preset or batch select ----
     dialog.on('click', '.preset_card', function (e) {
+        // Ignore if long-pressed
+        if ($(this).data('long-pressed')) {
+            $(this).data('long-pressed', false);
+            return;
+        }
+
         // Ignore if clicking action buttons
         if ($(e.target).closest('.preset_card_actions').length) return;
 
@@ -427,6 +618,20 @@ async function openPresetCards() {
 
         $('#settings_preset_openai').val(idx).trigger('change');
         toastr.success(`${t`Switched to`} ${name}`);
+    });
+
+    // ---- Clear Cache button ----
+    dialog.on('click', '#preset_cards_clear_cache_btn', async function () {
+        const confirm = await callGenericPopup(L('Clear all cached background images?'), POPUP_TYPE.CONFIRM);
+        if (!confirm) return;
+        
+        await clearImageCache();
+        toastr.success(L('Cache cleared successfully'));
+        
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        applyCachedBackgrounds(dialog);
+        dialog.find('#preset_cards_search').trigger('input');
     });
 
     // ---- Edit button ----
@@ -576,6 +781,14 @@ async function openPresetCards() {
                 console.error('Error emitting PRESET_DELETED', err);
             }
         }
+    });
+
+    // ---- Concise Mode toggle ----
+    dialog.on('click', '#preset_cards_concise_btn', function () {
+        isConciseMode = !isConciseMode;
+        $(this).toggleClass('active', isConciseMode);
+        dialog.toggleClass('preset_cards_concise_mode', isConciseMode);
+        localStorage.setItem('preset_cards_concise', isConciseMode);
     });
 
     // ---- Multi-select toggle ----
@@ -846,6 +1059,7 @@ async function openPresetCards() {
                 
                 const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
                 dialog.html($(newHtml).html());
+                applyCachedBackgrounds(dialog);
                 dialog.find('#preset_cards_search').trigger('input');
             } catch (err) {
                 console.error(err);
@@ -915,6 +1129,7 @@ async function openPresetCards() {
     });
 
     updateCount(presets.length, presets.length);
+    applyCachedBackgrounds(dialog);
 
     callGenericPopup(dialog, POPUP_TYPE.TEXT, '', {
         wide: true,
