@@ -17,8 +17,8 @@ import { settingsToUpdate } from '../../openai.js';
 // Constants
 // ─────────────────────────────────────────
 
-const EXTENSION_KEY = 'preset_cards';
-const LOGO_BASE = '/scripts/extensions/preset-cards/llm-logos/';
+const EXTENSION_NAME = import.meta.url.split('/').slice(-2, -1)[0];
+const LOGO_BASE = `/scripts/extensions/${EXTENSION_NAME}/llm-logos/`;
 
 // ---- Localization ----
 const LOCAL_DICT = {
@@ -317,7 +317,7 @@ async function openEditModal(presetName, presetIndex, onSaved) {
         selected: meta.models.includes(m.id),
     }));
 
-    const html = await renderExtensionTemplateAsync('preset-cards', 'edit', {
+    const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'edit', {
         presetName,
         description: meta.description,
         availableModels,
@@ -363,7 +363,7 @@ async function openPresetCards() {
     let isBatchMode = false;
     let batchSelectedCards = new Set();
 
-    const html = await renderExtensionTemplateAsync('preset-cards', 'cards', getCardsTemplateContext());
+    const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
     const dialog = $(html);
 
     // ---- Helpers ----
@@ -692,7 +692,7 @@ async function openPresetCards() {
         toastr.success(L('Configuration saved'));
         
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync('preset-cards', 'cards', { presets: buildPresetList() });
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
         dialog.find('#preset_cards_search').trigger('input');
     });
@@ -835,7 +835,7 @@ async function openPresetCards() {
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration saved'));
                 
-                const newHtml = await renderExtensionTemplateAsync('preset-cards', 'cards', getCardsTemplateContext());
+                const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
                 dialog.html($(newHtml).html());
                 dialog.find('#preset_cards_search').trigger('input');
             } catch (err) {
