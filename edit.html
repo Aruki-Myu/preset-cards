@@ -1,0 +1,19 @@
+<div id="preset_edit_modal">
+    <h4>{{presetName}}</h4>
+    <div class="preset_edit_field">
+        <label>{{i18n.descTitle}}</label>
+        <textarea id="preset_edit_desc" placeholder="{{i18n.descPlaceholder}}">{{description}}</textarea>
+    </div>
+    <div class="preset_edit_field">
+        <label>{{i18n.modelsTitle}}</label>
+        <div class="preset_edit_models_grid" id="preset_edit_models_grid">
+            {{#each availableModels}}
+            <div class="preset_edit_model_option {{#if this.selected}}active{{/if}}" data-model-id="{{this.id}}">
+                {{#if this.logo}}<img src="{{this.logo}}" alt="" />{{/if}}
+                <span>{{this.label}}</span>
+                <span class="check_mark fa-solid fa-check"></span>
+            </div>
+            {{/each}}
+        </div>
+    </div>
+</div>
