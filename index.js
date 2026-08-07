@@ -71,11 +71,11 @@ const SNAPSHOT_PROMPT_KEYS = [
     'prompts', 'sysPrompt', 'userPrompt', 'jailbreak', 'impersonation_prompt', 'bias_string'
 ];
 const SNAPSHOT_IGNORED_KEYS = [
-    'name', 'extensions', 'openai_model', 'claude_model', 'openrouter_model', 
-    'ai21_model', 'google_model', 'vertexai_model', 'mistralai_model', 'custom_model', 
-    'cohere_model', 'perplexity_model', 'groq_model', 'chutes_model', 'deepseek_model', 
-    'aimlapi_model', 'xai_model', 'pollinations_model', 'moonshot_model', 'fireworks_model', 
-    'cometapi_model', 'azure_openai_model', 'zai_model', 'siliconflow_model', 'workers_ai_model', 
+    'name', 'extensions', 'openai_model', 'claude_model', 'openrouter_model',
+    'ai21_model', 'google_model', 'vertexai_model', 'mistralai_model', 'custom_model',
+    'cohere_model', 'perplexity_model', 'groq_model', 'chutes_model', 'deepseek_model',
+    'aimlapi_model', 'xai_model', 'pollinations_model', 'moonshot_model', 'fireworks_model',
+    'cometapi_model', 'azure_openai_model', 'zai_model', 'siliconflow_model', 'workers_ai_model',
     'minimax_model'
 ];
 
@@ -112,7 +112,7 @@ async function getCachedImageURL(url) {
     if (!url) return '';
     // Skip data URIs or local blob URIs
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
-    
+
     if (URL_CACHE.has(url)) return URL_CACHE.get(url);
 
     const promise = (async () => {
@@ -132,10 +132,10 @@ async function getCachedImageURL(url) {
                         const response = await fetch(url, { mode: 'cors' });
                         if (!response.ok) throw new Error('Network response was not ok');
                         const blob = await response.blob();
-                        
+
                         const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
                         writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
-                        
+
                         resolve(URL.createObjectURL(blob));
                     } catch (err) {
                         console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
@@ -151,12 +151,12 @@ async function getCachedImageURL(url) {
 }
 
 async function applyCachedBackgrounds(container) {
-    const bgElements = container.find('.preset_card_bg_image').filter(function() {
+    const bgElements = container.find('.preset_card_bg_image').filter(function () {
         return $(this).data('bg-url') && !$(this).css('background-image').includes('url(');
     });
 
     const urlGroups = {};
-    bgElements.each(function() {
+    bgElements.each(function () {
         const url = $(this).data('bg-url');
         if (!urlGroups[url]) urlGroups[url] = [];
         urlGroups[url].push(this);
@@ -195,12 +195,13 @@ function L(text) {
  * `id` is stored in the preset, `logo` is the filename in llm-logos/, `label` is the display name.
  */
 const AVAILABLE_MODELS = [
-    { id: 'claude',   label: 'Claude',   logo: 'claude-color.png'   },
-    { id: 'gemini',   label: 'Gemini',   logo: 'gemini-color.png'   },
+    { id: 'claude', label: 'Claude', logo: 'claude-color.png' },
+    { id: 'gemini', label: 'Gemini', logo: 'gemini-color.png' },
+    { id: 'chatgpt', label: 'ChatGPT', logo: 'chatgpt.png' },
     { id: 'deepseek', label: 'DeepSeek', logo: 'deepseek-color.png' },
-    { id: 'chatglm',  label: 'ChatGLM',  logo: 'chatglm-color.png'  },
-    { id: 'grok',     label: 'Grok',     logo: 'grok.png'           },
-    { id: 'kimi',     label: 'Kimi',     logo: 'kimi-color.png'     },
+    { id: 'chatglm', label: 'ChatGLM', logo: 'chatglm-color.png' },
+    { id: 'grok', label: 'Grok', logo: 'grok.png' },
+    { id: 'kimi', label: 'Kimi', logo: 'kimi-color.png' },
 ];
 
 /** Map model id → full logo URL */
@@ -379,7 +380,7 @@ function buildPresetList() {
 
         // Read custom metadata
         const meta = readMeta(preset);
-        
+
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
 
         // Build model chips from metadata
@@ -507,7 +508,7 @@ async function openEditModal(presetName, presetIndex, onSaved) {
 
 async function openPresetCards() {
     let presets = buildPresetList();
-    
+
     let isBatchMode = false;
     let batchSelectedCards = new Set();
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
@@ -556,40 +557,40 @@ async function openPresetCards() {
         const idx = card.data('preset-index');
         const preset = openai_settings[idx];
         const meta = readMeta(preset);
-        
+
         if (!meta.profiles || meta.profiles.length === 0) {
             toastr.info(L('No configurations saved for this preset'));
             return;
         }
-        
+
         const container = $('<div class="preset_card_profiles_section" style="margin-top:0; padding:0; border:none; box-shadow:none; background:transparent;"></div>');
         const list = $('<div class="preset_card_profiles_list"></div>');
-        
+
         meta.profiles.forEach(p => {
             const row = $(`<div class="preset_card_profile_row" data-profile-id="${p.id}" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;">
                 <div class="preset_card_profile_name" style="font-size:14px;">${p.name}</div>
             </div>`);
-            
-            row.on('click', async function() {
+
+            row.on('click', async function () {
                 const ext = preset.extensions;
                 Object.assign(preset, p.settings);
                 preset.extensions = ext;
-                
+
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration loaded'));
-                
+
                 if (oai_settings.preset_settings_openai === name) {
                     $('#settings_preset_openai').trigger('change');
                 }
-                
+
                 $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
             });
-            
+
             list.append(row);
         });
-        
+
         container.append(list);
-        
+
         callGenericPopup(container, POPUP_TYPE.TEXT, '', {
             wide: false,
             large: false,
@@ -602,7 +603,7 @@ async function openPresetCards() {
 
         isDragging = false;
         const card = $(this);
-        
+
         pressTimer = window.setTimeout(function () {
             card.data('long-pressed', true);
             showConciseProfilesModal(card);
@@ -617,8 +618,8 @@ async function openPresetCards() {
     dialog.on('mouseup touchend mouseleave', '.preset_card', function () {
         clearTimeout(pressTimer);
     });
-    
-    dialog.on('contextmenu', '.preset_card', function(e) {
+
+    dialog.on('contextmenu', '.preset_card', function (e) {
         if (isConciseMode && !isBatchMode && $(this).data('long-pressed')) {
             e.preventDefault();
         }
@@ -636,7 +637,7 @@ async function openPresetCards() {
         if ($(e.target).closest('.preset_card_actions').length) return;
 
         const name = $(this).attr('data-preset-name');
-        
+
         if (isBatchMode) {
             if (batchSelectedCards.has(name)) {
                 batchSelectedCards.delete(name);
@@ -661,10 +662,10 @@ async function openPresetCards() {
     dialog.on('click', '#preset_cards_clear_cache_btn', async function () {
         const confirm = await callGenericPopup(L('Clear all cached background images?'), POPUP_TYPE.CONFIRM);
         if (!confirm) return;
-        
+
         await clearImageCache();
         toastr.success(L('Cache cleared successfully'));
-        
+
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
         applyCachedBackgrounds(dialog);
@@ -729,7 +730,7 @@ async function openPresetCards() {
         const name = $(this).attr('data-preset-name');
         const idx = $(this).data('preset-index');
         const preset = structuredClone(openai_settings[idx]);
-        
+
         // Remove sensitive fields
         const sensitiveFields = [
             'reverse_proxy',
@@ -744,7 +745,7 @@ async function openPresetCards() {
             'azure_deployment_name',
             'workers_ai_account_id',
         ];
-        
+
         sensitiveFields.forEach(field => delete preset[field]);
 
         // Remove connection data
@@ -764,14 +765,14 @@ async function openPresetCards() {
     dialog.on('click', '.preset_card_delete_btn', async function (e) {
         e.stopPropagation();
         const nameToDelete = $(this).attr('data-preset-name');
-        
+
         const confirm = await callGenericPopup(t`Delete the preset? This action is irreversible and your current settings will be overwritten.`, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
         const value = openai_setting_names[nameToDelete];
         $(`#settings_preset_openai option[value="${value}"]`).remove();
         delete openai_setting_names[nameToDelete];
-        
+
         if (oai_settings.preset_settings_openai === nameToDelete) {
             oai_settings.preset_settings_openai = null;
             if (Object.keys(openai_setting_names).length) {
@@ -792,16 +793,16 @@ async function openPresetCards() {
             toastr.warning(t`Preset was not deleted from server`);
         } else {
             toastr.success(t`Preset deleted`);
-            
+
             // Safely remove the card from the UI immediately
             dialog.find('.preset_card').filter(function () {
                 return $(this).attr('data-preset-name') === nameToDelete;
             }).remove();
-            
+
             // Re-evaluate counts and search
             presets = presets.filter(p => p.name !== nameToDelete);
             dialog.find('#preset_cards_search').trigger('input');
-            
+
             // If the active preset changed (because the old one was deleted), update the selected styling
             dialog.find('.preset_card').removeClass('selected');
             const newActive = oai_settings.preset_settings_openai;
@@ -810,7 +811,7 @@ async function openPresetCards() {
                     return $(this).attr('data-preset-name') === newActive;
                 }).addClass('selected');
             }
-            
+
             // Emit the event LAST to avoid being interrupted by other listeners
             try {
                 await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
@@ -833,7 +834,7 @@ async function openPresetCards() {
         isBatchMode = !isBatchMode;
         $(this).toggleClass('active', isBatchMode);
         dialog.toggleClass('preset_cards_batch_mode', isBatchMode);
-        
+
         if (isBatchMode) {
             dialog.find('#preset_cards_batch_delete_btn').removeClass('hidden');
         } else {
@@ -862,7 +863,7 @@ async function openPresetCards() {
 
             $(`#settings_preset_openai option[value="${value}"]`).remove();
             delete openai_setting_names[nameToDelete];
-            
+
             if (oai_settings.preset_settings_openai === nameToDelete) {
                 oai_settings.preset_settings_openai = null;
                 activeDeleted = true;
@@ -895,7 +896,7 @@ async function openPresetCards() {
                 $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
                 $('#settings_preset_openai').trigger('change');
             }
-            
+
             dialog.find('.preset_card').removeClass('selected');
             const newActive = oai_settings.preset_settings_openai;
             if (newActive) {
@@ -909,7 +910,7 @@ async function openPresetCards() {
             toastr.success(t`${deletedCount} presets deleted`);
             dialog.find('#preset_cards_search').trigger('input');
         }
-        
+
         // Exit batch mode
         dialog.find('#preset_cards_multiselect_btn').trigger('click');
     });
@@ -920,7 +921,7 @@ async function openPresetCards() {
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
-        
+
         const nameInput = $('<input type="text" class="text_pole" style="margin-bottom:15px;">');
         nameInput.attr('placeholder', L('e.g., GPT-4 Optimization'));
         const genCheck = $('<input type="checkbox" checked>');
@@ -930,12 +931,12 @@ async function openPresetCards() {
         container.append($('<label>').html(`<b>${L('Configuration name:')}</b>`));
         container.append(nameInput);
         container.append($('<label style="margin-top:5px;margin-bottom:5px;">').html(`<b>${L('Select modules to save in this snapshot:')}</b>`));
-        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
-        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
+        container.append($('<label>').css({ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
+        container.append($('<label>').css({ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
 
         const confirm = await callGenericPopup(container, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
-        
+
         const profileName = nameInput.val().trim();
         if (!profileName) return;
 
@@ -953,12 +954,12 @@ async function openPresetCards() {
         const preset = openai_settings[idx];
         const meta = readMeta(preset);
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-        
+
         // Snapshot the current preset settings based on selected modules
         const snapshot = {};
         for (const key of Object.keys(preset)) {
             if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
-            
+
             const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
             if (isPromptKey && savePrompt) {
                 snapshot[key] = structuredClone(preset[key]);
@@ -966,17 +967,17 @@ async function openPresetCards() {
                 snapshot[key] = structuredClone(preset[key]);
             }
         }
-        
+
         profiles.push({
             id: Date.now().toString() + Math.floor(Math.random() * 1000),
             name: profileName,
             settings: snapshot
         });
-        
+
         meta.profiles = profiles;
         await saveMeta(name, idx, meta);
         toastr.success(L('Configuration saved'));
-        
+
         // Refresh UI
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
@@ -991,22 +992,22 @@ async function openPresetCards() {
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
-        
+
         const preset = openai_settings[idx];
         const meta = readMeta(preset);
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
-        
+
         // Merge profile settings into the preset, while preserving extensions
         const ext = preset.extensions;
         Object.assign(preset, profile.settings);
         preset.extensions = ext;
-        
+
         // Save to disk so changes persist
         await saveMeta(name, idx, meta);
-        
+
         toastr.success(L('Configuration loaded'));
-        
+
         // If this is the active preset, trigger a native UI reload
         if (oai_settings.preset_settings_openai === name) {
             $('#settings_preset_openai').trigger('change');
@@ -1021,15 +1022,15 @@ async function openPresetCards() {
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
-        
+
         const genCheck = $('<input type="checkbox" checked>');
         const promptCheck = $('<input type="checkbox" checked>');
 
         const container = $('<div style="display:flex;flex-direction:column;gap:5px;text-align:left;"></div>');
         container.append($('<label style="margin-bottom:10px;">').html(`<b>${L('Overwrite this configuration with current settings?')}</b>`));
         container.append($('<label style="margin-bottom:5px;">').html(`<b>${L('Select modules to save in this snapshot:')}</b>`));
-        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
-        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
+        container.append($('<label>').css({ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
+        container.append($('<label>').css({ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
 
         const confirm = await callGenericPopup(container, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
@@ -1054,7 +1055,7 @@ async function openPresetCards() {
         const snapshot = {};
         for (const key of Object.keys(preset)) {
             if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
-            
+
             const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
             if (isPromptKey && savePrompt) {
                 snapshot[key] = structuredClone(preset[key]);
@@ -1062,9 +1063,9 @@ async function openPresetCards() {
                 snapshot[key] = structuredClone(preset[key]);
             }
         }
-        
+
         profile.settings = snapshot;
-        
+
         await saveMeta(name, idx, meta);
         toastr.success(L('Configuration updated'));
     });
@@ -1077,16 +1078,16 @@ async function openPresetCards() {
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
-        
+
         const preset = openai_settings[idx];
         const meta = readMeta(preset);
-        
+
         const confirm = await callGenericPopup(L('Delete this configuration?'), POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
         meta.profiles = (meta.profiles || []).filter(p => p.id !== String(profileId));
         await saveMeta(name, idx, meta);
-        
+
         row.remove();
     });
 
@@ -1097,11 +1098,11 @@ async function openPresetCards() {
         const profileId = row.data('profile-id');
         const card = $(this).closest('.preset_card');
         const preset = openai_settings[card.data('preset-index')];
-        
+
         const meta = readMeta(preset);
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
-        
+
         const data = JSON.stringify(profile.settings, null, 4);
         download(data, `${profile.name}.json`, 'application/json');
     });
@@ -1112,36 +1113,36 @@ async function openPresetCards() {
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
-        
+
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
         input.onchange = async (event) => {
             const file = event.target.files[0];
             if (!file) return;
-            
+
             try {
                 const text = await file.text();
                 const settings = JSON.parse(text);
-                
+
                 let defaultName = file.name.replace(/\.json$/i, '');
                 const profileName = await Popup.show.input(L('Configuration name:'), defaultName, defaultName);
                 if (!profileName) return;
-                
+
                 const preset = openai_settings[idx];
                 const meta = readMeta(preset);
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-                
+
                 profiles.push({
                     id: Date.now().toString() + Math.floor(Math.random() * 1000),
                     name: profileName,
                     settings: settings
                 });
-                
+
                 meta.profiles = profiles;
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration saved'));
-                
+
                 const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
                 dialog.html($(newHtml).html());
                 applyCachedBackgrounds(dialog);
@@ -1159,40 +1160,40 @@ async function openPresetCards() {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
         const nameContainer = row.find('.preset_card_profile_name');
-        
+
         // Prevent double click/edit
-        if (nameContainer.length === 0) return; 
-        
+        if (nameContainer.length === 0) return;
+
         const currentName = nameContainer.text();
-        
+
         const input = $('<input>', {
             type: 'text',
             class: 'preset_card_profile_edit_input',
             value: currentName
         });
-        
+
         nameContainer.replaceWith(input);
         input.focus();
-        
+
         input.on('blur keydown', async function (evt) {
             if (evt.type === 'keydown' && evt.key !== 'Enter' && evt.key !== 'Escape') return;
             evt.stopPropagation();
-            
+
             const newName = (evt.key === 'Escape') ? currentName : input.val().trim() || currentName;
-            
+
             const newContainer = $('<div>', {
                 class: 'preset_card_profile_name',
                 title: 'Load configuration',
                 text: newName
             });
             input.replaceWith(newContainer);
-            
+
             if (newName !== currentName && evt.key !== 'Escape') {
                 const profileId = row.data('profile-id');
                 const card = row.closest('.preset_card');
                 const name = card.attr('data-preset-name');
                 const idx = card.data('preset-index');
-                
+
                 const preset = openai_settings[idx];
                 const meta = readMeta(preset);
                 const profile = meta.profiles.find(p => p.id === String(profileId));
@@ -1231,7 +1232,7 @@ export function init() {
     const buttonHtml = `
         <div id="preset_cards_button" class="list-group-item flex-container flexGap5">
             <div class="fa-solid fa-grip extensionsMenuExtensionButton"></div>` +
-            t`Preset Cards` +
+        t`Preset Cards` +
         '</div>';
     $('#token_counter_wand_container').append(buttonHtml);
     $('#preset_cards_button').on('click', openPresetCards);
