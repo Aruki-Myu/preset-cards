@@ -26,6 +26,7 @@ import {
     buildPromptSnapshot,
     buildPromptToggleSnapshot,
     capturePromptFields,
+    filterFields,
     resolveParentStates,
     resolveProfilePrompts,
     resolveProfileStates,
@@ -115,7 +116,9 @@ export async function openPresetCards(): Promise<void> {
             resolver(v);
         }
 
-        callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: '', cancelButton: '' });
+        // okButton: false 用 popup 内置的隐藏行为（TEXT 类型对 false 隐藏 OK 按钮），按钮仍在 DOM，
+        // resolveChoice 里 .click() 仍能正常触发关闭
+        callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
         return promise;
     }
 
@@ -166,6 +169,17 @@ export async function openPresetCards(): Promise<void> {
         contentWrap.append(contentInput);
         container.append(contentWrap);
 
+        const positionWrap = $('<div class="preset_edit_field"></div>');
+        positionWrap.append($('<label></label>').text(L('Position')));
+        const positionSelect = $('<select class="text_pole"></select>');
+        for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
+            const option = $('<option></option>').attr('value', value).text(label);
+            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
+            positionSelect.append(option);
+        }
+        positionWrap.append(positionSelect);
+        container.append(positionWrap);
+
         const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
             okButton: t`Save`,
             cancelButton: t`Cancel`,
@@ -178,10 +192,12 @@ export async function openPresetCards(): Promise<void> {
         const role = String(roleSelect.val() ?? 'system');
         const name = String(nameInput.val() ?? '');
         const content = String(contentInput.val() ?? '');
+        const position = Number(positionSelect.val() ?? 0);
 
         if (role !== (prompt.role ?? 'system')) fields.role = role;
         if (name !== (prompt.name ?? '')) fields.name = name;
         if (!isMarker && content !== (prompt.content ?? '')) fields.content = content;
+        if (position !== (prompt.injection_position ?? 0)) fields.injection_position = position;
 
         return Object.keys(fields).length > 0 ? fields : null;
     }
@@ -753,6 +769,20 @@ export async function openPresetCards(): Promise<void> {
         // 写入插件既有的同一个 preset 对象，不立即 saveMeta（与开关行为一致）
         Object.assign(prompt, editedFields);
 
+        // 若编辑的是当前激活预设，同步到运行时的 oai_settings.prompts：
+        // 生成时 promptManager 读的就是这个对象（openai.js:1557），不依赖异步的
+        // #settings_preset_openai 刷新；同时让"以当前设置覆盖"不再有旧值可回退覆盖
+        // （R2：#update_oai_preset → getChatCompletionPreset(oai_settings) 会把存盘
+        // 预设覆盖成 oai_settings 的旧快照，导致本编辑被抹掉）。
+        const name = card.attr('data-preset-name') as string;
+        if (oai_settings.preset_settings_openai === name) {
+            const livePrompts = Array.isArray(oai_settings.prompts) ? oai_settings.prompts : [];
+            const livePrompt = livePrompts.find((p: any) => p && p.identifier === identifier);
+            if (livePrompt) {
+                Object.assign(livePrompt, filterFields(editedFields));
+            }
+        }
+
         // Mark the row as modified so the save button shows up
         row.addClass('modified');
         row.find('.preset_card_profile_save_btn').removeClass('hidden');
@@ -959,14 +989,30 @@ export async function openPresetCards(): Promise<void> {
         if (!profile) return;
 
         if (isPromptBaseProfile(profile)) {
-            // 主 profile：重新采集开关清单覆盖
-            profile.prompts = buildPromptToggleSnapshot(preset);
+            // 覆盖仅重同步 enabled 开关；fields 保留既有值（本次会话未编辑的条目不丢），
+            // 本次会话编辑过的条目按与编辑初值是否有净变化决定保留/清除（与保存流程一致）
+            const previousPrompts = profile.prompts;
+            const snapshot = buildPromptSnapshot(preset, { includeFields: new Set(sessionEdits.keys()) });
+            profile.prompts = snapshot.map((s) => {
+                const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
+                    identifier: s.identifier,
+                    enabled: s.enabled,
+                };
+                const session = sessionEdits.get(s.identifier);
+                if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
+                    entry.fields = s.fields;
+                } else if (!session) {
+                    const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
+                    if (prior) entry.fields = prior;
+                }
+                return entry;
+            });
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
             refreshActivePresetUI(name);
         } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：基于解析后的 parent 状态重新生成差异
+            // 派生 profile：基于解析后的 parent 状态重新生成差异（statesToChanges 保留既有 fields）
             const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             if (parentStates.length === 0) {
                 toastr.warning(L('Base profile not found, cannot update derived configuration'));

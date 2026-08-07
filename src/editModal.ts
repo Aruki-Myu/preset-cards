@@ -47,6 +47,7 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
     const result = await callGenericPopup(dialog, POPUP_TYPE.CONFIRM, '', {
         okButton: t`Save`,
         cancelButton: t`Cancel`,
+        allowVerticalScrolling: true,
     });
 
     if (result !== POPUP_RESULT.AFFIRMATIVE) return;

@@ -548,7 +548,8 @@
     display: flex;
     flex-direction: column;
     gap: 14px;
-    min-width: 380px;
+    width: min(100%, 420px);
+    max-width: 100%;
 }
 
 #preset_edit_modal h4 {
@@ -1013,17 +1014,6 @@
     padding: 6px 10px;
 }
 
-.preset_cards_prompt_edit_section_title {
-    font-size: 11px;
-    font-weight: 700;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.6;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    border-top: 1px solid rgba(var(--SmartThemeBodyColorRgb, 200, 200, 200), 0.1);
-    padding-top: 10px;
-}
-
 .preset_cards_prompt_edit_form select,
 .preset_cards_prompt_edit_form input[type="text"],
 .preset_cards_prompt_edit_form input[type="number"],
@@ -1135,6 +1125,10 @@
 
     /* Prompt edit popup: avoid horizontal overflow, keep buttons reachable */
     .preset_cards_prompt_edit_form {
+        width: 100%;
+    }
+
+    #preset_edit_modal {
         width: 100%;
     }
 

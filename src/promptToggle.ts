@@ -3,12 +3,14 @@ import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
 /** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。
- * 注入参数（injection_position/depth/order）为内部字段，UI 不编辑，也不随 profile 捕获，
+ * injection_position 为用户可编辑字段，随 profile 捕获/应用；
+ * injection_depth/order 仍为内部字段，UI 不编辑、不随 profile 捕获，
  * 否则加载 profile 时会用旧快照覆盖用户此后在 Prompt Manager 里调整的注入值。 */
 export const PROMPT_FIELD_WHITELIST: (keyof PromptFields)[] = [
     'content',
     'name',
     'role',
+    'injection_position',
 ];
 
 /**
@@ -28,7 +30,7 @@ export function capturePromptFields(prompt: Record<string, any> | undefined): Pr
 }
 
 /** 只保留白名单键的值字段（R10：应用边界防御，丢弃导入/旧数据里的任意键）。 */
-function filterFields(fields: Record<string, any> | undefined): PromptFields {
+export function filterFields(fields: Record<string, any> | undefined): PromptFields {
     const out: PromptFields = {};
     if (!fields) return out;
     for (const key of PROMPT_FIELD_WHITELIST) {
