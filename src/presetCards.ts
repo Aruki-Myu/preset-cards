@@ -134,8 +134,8 @@ export async function openPresetCards(): Promise<void> {
         return promise;
     }
 
-    // 导出方式选择弹窗：单一导出 / 关系链导出 / 整卡预设导出 / 取消
-    async function chooseProfileExportAction(): Promise<'profile' | 'tree' | 'preset' | null> {
+    // 导出方式选择弹窗：单一导出 / 关系链导出 / 取消（完整预设导出直接用 ST 自带功能）
+    async function chooseProfileExportAction(): Promise<'profile' | 'tree' | null> {
         const container = $('<div class="preset_cards_save_choice"></div>');
         container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Export configuration')));
         const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
@@ -146,17 +146,14 @@ export async function openPresetCards(): Promise<void> {
             .text(L('Export with branch chain'))
             .on('click', function () { resolveChoice('tree'); }));
         buttons.append($('<button class="menu_button"></button>')
-            .text(L('Export current full preset'))
-            .on('click', function () { resolveChoice('preset'); }));
-        buttons.append($('<button class="menu_button"></button>')
             .text(L('Cancel'))
             .on('click', function () { resolveChoice(null); }));
         container.append(buttons);
 
-        let resolver: (v: 'profile' | 'tree' | 'preset' | null) => void;
-        const promise = new Promise<'profile' | 'tree' | 'preset' | null>(r => { resolver = r; });
+        let resolver: (v: 'profile' | 'tree' | null) => void;
+        const promise = new Promise<'profile' | 'tree' | null>(r => { resolver = r; });
 
-        function resolveChoice(v: 'profile' | 'tree' | 'preset' | null): void {
+        function resolveChoice(v: 'profile' | 'tree' | null): void {
             $(container).closest('.popup').find('.popup-controls .menu_button').click();
             resolver(v);
         }
@@ -1161,7 +1158,6 @@ export async function openPresetCards(): Promise<void> {
         const row = $(this).closest('.preset_card_profile_row');
         const profileId = row.data('profile-id');
         const card = $(this).closest('.preset_card');
-        const name = card.attr('data-preset-name') as string;
         const idx = card.data('preset-index') as number;
         const preset = openai_settings[idx] as Preset;
 
@@ -1177,8 +1173,6 @@ export async function openPresetCards(): Promise<void> {
             } else {
                 download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
             }
-        } else if (choice === 'preset') {
-            exportPresetFile(name, idx);
         } else if (choice === 'profile') {
             download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
         }
