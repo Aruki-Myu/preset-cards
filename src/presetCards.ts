@@ -29,6 +29,7 @@ import {
     resolveParentStates,
     resolveProfilePrompts,
     resolveProfileStates,
+    reorderPromptOrder,
     snapshotToChanges,
     statesToChanges,
 } from './promptToggle.js';
@@ -70,6 +71,14 @@ export async function openPresetCards(): Promise<void> {
             $('#settings_preset_openai').trigger('change');
             promptManager?.render?.(false);
         }
+    }
+
+    // 顺序移动后本地刷新上移/下移按钮的边界禁用态
+    function updateEntryMoveButtons(el: JQuery<HTMLElement>): void {
+        el.find('.preset_card_profile_entry_move_up')
+            .toggleClass('disabled', el.prev('.preset_card_profile_entry').length === 0);
+        el.find('.preset_card_profile_entry_move_down')
+            .toggleClass('disabled', el.next('.preset_card_profile_entry').length === 0);
     }
 
     // Backfill a hidden default snapshot for presets that don't have one yet.
@@ -818,6 +827,44 @@ export async function openPresetCards(): Promise<void> {
         entry.removeClass('has_fields');
         entry.find('.preset_card_profile_entry_modified').remove();
         $(this).remove();
+    });
+
+    // ---- Profiles: Reorder prompt_order (only active preset renders these buttons) ----
+    dialog.on('click', '.preset_card_profile_entry_move', async function (e) {
+        e.stopPropagation();
+        const btn = $(this);
+        if (btn.hasClass('disabled')) return;
+
+        const entry = btn.closest('.preset_card_profile_entry');
+        const row = entry.closest('.preset_card_profile_row');
+        const card = row.closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+        const identifier = String(entry.data('identifier'));
+        const preset = openai_settings[idx] as Preset;
+
+        const delta = btn.hasClass('preset_card_profile_entry_move_up') ? -1 : 1;
+        // 只重排 .order 数组：不动单条 enabled、不动 prompts[] 顺序
+        if (!reorderPromptOrder(preset, identifier, delta)) return;
+
+        // 插件既有持久化路径：mutate openai_settings[idx] → saveMeta（写预设文件）→ refreshActivePresetUI（同步 oai_settings + 刷新 Prompt Manager）
+        await saveMeta(name, idx, readMeta(preset));
+        refreshActivePresetUI(name);
+
+        // 本地反馈：交换 DOM 条目位置并刷新边界禁用态
+        const siblings = entry.parent().children('.preset_card_profile_entry');
+        const target = delta === -1
+            ? siblings.eq(siblings.index(entry) - 1)
+            : siblings.eq(siblings.index(entry) + 1);
+        if (target.length) {
+            if (delta === -1) {
+                entry.insertBefore(target);
+            } else {
+                entry.insertAfter(target);
+            }
+            updateEntryMoveButtons(entry);
+            updateEntryMoveButtons(target);
+        }
     });
 
     // ---- Profiles: Save expanded edits ----

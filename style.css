@@ -673,6 +673,20 @@
     gap: 4px;
 }
 
+.preset_card_prompt_order_warning {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0 4px 8px 4px;
+    padding: 6px 10px;
+    font-size: 11px;
+    line-height: 1.4;
+    color: #e6a23c;
+    background: rgba(230, 162, 60, 0.1);
+    border: 1px solid rgba(230, 162, 60, 0.35);
+    border-radius: 6px;
+}
+
 .preset_card_add_profile_btn,
 .preset_card_import_profile_btn {
     width: 20px;
@@ -888,6 +902,40 @@
     background: rgba(244, 67, 54, 0.12);
 }
 
+.preset_card_profile_entry_move {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--SmartThemeBodyColor);
+    font-size: 9px;
+    opacity: 0;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.preset_card_profile_entry:hover .preset_card_profile_entry_move {
+    opacity: 0.7;
+}
+
+.preset_card_profile_entry_move:hover:not(.disabled) {
+    opacity: 1 !important;
+    color: var(--SmartThemeQuoteColor);
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
+}
+
+.preset_card_profile_entry_move.disabled {
+    opacity: 0.25;
+    cursor: default;
+    pointer-events: none;
+}
+
 .preset_card_profile_entry.has_fields {
     background: rgba(230, 162, 60, 0.08);
 }
@@ -1078,7 +1126,8 @@
 
     /* Always reveal edit buttons on touch */
     .preset_card_profile_entry_edit,
-    .preset_card_profile_entry_clear {
+    .preset_card_profile_entry_clear,
+    .preset_card_profile_entry_move {
         opacity: 0.7;
     }
     

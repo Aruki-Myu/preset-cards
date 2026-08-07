@@ -1,4 +1,4 @@
-import { oai_settings, openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, promptManager } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
 import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaProfile } from './meta.js';
 import { resolveProfilePrompts } from './promptToggle.js';
@@ -19,6 +19,10 @@ export interface ProfileEntryView {
     clearable?: boolean;
     /** 是否允许编辑内容：仅普通 prompt（非 system_prompt / marker）可编辑。 */
     editable?: boolean;
+    /** 是否允许顺序编辑（仅活动预设、且目标 prompt_order 条目的 order 含该 identifier）。 */
+    orderable?: boolean;
+    canMoveUp?: boolean;
+    canMoveDown?: boolean;
 }
 
 /** 单张卡片的视图模型,喂给 cards.html 模板。 */
@@ -38,6 +42,8 @@ export interface PresetCardModel {
     bgImage: string;
     modelChips: ModelChip[];
     profiles: PresetProfile[];
+    /** 活动预设 + global 策略：顺序编辑作用于所有角色，UI 需明示。 */
+    promptOrderGlobal: boolean;
 }
 
 function truncate(str: string, max: number): string {
@@ -55,6 +61,23 @@ export function buildPresetList(): PresetCardModel[] {
     for (const [name, index] of Object.entries(openai_setting_names)) {
         const preset = openai_settings[index] as Preset | undefined;
         if (!preset) continue;
+
+        const isActive = name === currentPresetName;
+
+        // 顺序编辑目标条目索引：global → 100001；character → 当前活动角色 id（策略感知）。
+        const promptOrderStrategy = promptManager?.configuration?.promptOrder?.strategy ?? 'global';
+        const orderTarget = promptOrderStrategy === 'character' ? promptManager?.activeCharacter?.id ?? 100001 : 100001;
+        const orderIndex = new Map<string, number>();
+        let orderLength = 0;
+        if (isActive && Array.isArray(preset.prompt_order)) {
+            const orderList = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(orderTarget));
+            if (Array.isArray(orderList?.order)) {
+                orderLength = orderList.order.length;
+                orderList.order.forEach((o: any, i: number) => {
+                    if (o && typeof o.identifier === 'string') orderIndex.set(o.identifier, i);
+                });
+            }
+        }
 
         const source = String(preset['chat_completion_source'] ?? '');
         const sourceLabel = SOURCE_LABELS[source] || '';
@@ -101,6 +124,7 @@ export function buildPresetList(): PresetCardModel[] {
                 entries = resolved.map((e) => {
                     const prompt = promptLookup.get(e.identifier);
                     const hasFields = !!e.fields && Object.keys(e.fields).length > 0;
+                    const orderIdx = orderIndex.get(e.identifier);
                     return {
                         identifier: e.identifier,
                         name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
@@ -112,6 +136,10 @@ export function buildPresetList(): PresetCardModel[] {
                             : hasFields,
                         // system_prompt / marker 条目不渲染编辑入口；预设中缺失的条目也无法编辑
                         editable: !!prompt && !prompt.system_prompt && !prompt.marker,
+                        // 顺序编辑仅对活动预设开放（重排非活动预设的 prompt_order 无意义）
+                        orderable: orderIdx !== undefined,
+                        canMoveUp: orderIdx !== undefined && orderIdx > 0,
+                        canMoveDown: orderIdx !== undefined && orderIdx < orderLength - 1,
                     };
                 });
             }
@@ -135,7 +163,8 @@ export function buildPresetList(): PresetCardModel[] {
         presets.push({
             name,
             index,
-            isActive: name === currentPresetName,
+            isActive,
+            promptOrderGlobal: isActive && promptOrderStrategy === 'global',
             temperature: preset['temperature'] != null ? String(preset['temperature']) : '',
             topP: preset['top_p'] != null ? String(preset['top_p']) : '',
             topK: preset['top_k'] != null ? String(preset['top_k']) : '',
@@ -190,6 +219,9 @@ export function getCardsTemplateContext() {
             editPrompt: L('Edit prompt'),
             clearValueChange: L('Clear value changes'),
             saveChanges: L('Save changes'),
+            moveUp: L('Move up'),
+            moveDown: L('Move down'),
+            globalOrderWarning: L('Global prompt order: the order below applies to ALL characters'),
         }
     };
 }

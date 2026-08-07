@@ -1,3 +1,4 @@
+import { promptManager } from '@sillytavern/scripts/openai';
 import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
@@ -274,14 +275,31 @@ export function applyDeltaProfile(
 }
 
 /**
- * 同步 preset.prompt_order 中 global 策略条目（character_id === 100001）的开关。
+ * 读取 prompt_order 的写入目标角色 id（策略感知）：
+ * - global（默认）→ 100001（ST dummyId，作用于所有角色）；
+ * - character → promptManager.activeCharacter.id（ST PromptManager.js:1130-1144 维护；
+ *   新角色无 order 条目时 ST 会写默认顺序，按 100001 写的数据对该角色「看似消失」）。
+ * promptManager 缺失 / 目标角色缺失时回退 100001，绝不抛错。
+ */
+export function resolvePromptOrderTarget(): number {
+    const strategy = promptManager?.configuration?.promptOrder?.strategy;
+    if (strategy === 'character') {
+        return promptManager?.activeCharacter?.id ?? 100001;
+    }
+    return 100001;
+}
+
+/**
+ * 同步 preset.prompt_order 中目标策略条目（global → 100001 / character → 活动角色 id）的开关。
  * 对应条目的 order 数组按 identifier 设置 enabled，不存在则 push；全程用 ?. 守卫防缺失。
+ * Array.isArray 守卫兼容旧对象格式 {character_id: {order}}（否则 .find 会抛 TypeError）。
  */
 export function syncPromptOrder(
     preset: Preset,
     entries: { identifier: string; enabled: boolean }[],
 ): void {
-    const list = preset.prompt_order?.find((x: any) => x && String(x.character_id) === '100001');
+    if (!Array.isArray(preset.prompt_order)) return;
+    const list = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(resolvePromptOrderTarget()));
     if (!list?.order) return;
 
     for (const entry of entries) {
@@ -292,6 +310,27 @@ export function syncPromptOrder(
             list.order.push({ identifier: entry.identifier, enabled: entry.enabled });
         }
     }
+}
+
+/**
+ * 在目标 prompt_order 条目的 .order 数组内按 identifier 移动位置（delta = -1 上移 / +1 下移）。
+ * 只重排 .order，绝不动单条 enabled、绝不动 prompts[] 顺序。
+ * 旧对象格式 / 缺目标条目 / 越界时安全返回 false。
+ */
+export function reorderPromptOrder(preset: Preset, identifier: string, delta: -1 | 1): boolean {
+    if (!Array.isArray(preset.prompt_order)) return false;
+    const list = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(resolvePromptOrderTarget()));
+    if (!list || !Array.isArray(list.order)) return false;
+    const order = list.order as { identifier: string }[];
+
+    const index = order.findIndex((o: any) => o && o.identifier === identifier);
+    if (index === -1) return false;
+    const newIndex = index + delta;
+    if (newIndex < 0 || newIndex >= order.length) return false;
+
+    const [moved] = order.splice(index, 1);
+    order.splice(newIndex, 0, moved);
+    return true;
 }
 
 /**
