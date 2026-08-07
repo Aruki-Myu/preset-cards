@@ -41,7 +41,22 @@
 ```text
 preset-cards/
 ├── manifest.json       // 扩展元数据，向 ST 声明加载顺序 (loading_order) 及入口文件
-├── index.js            // 核心逻辑控制 (Controller & Model)
+├── package.json        // 构建脚本与依赖 (Vite + TypeScript)
+├── tsconfig.json       // TypeScript 编译配置
+├── vite.config.ts      // Vite 构建配置 (@sillytavern/* 外部化解析)
+├── src/                // TypeScript 源码 (Controller & Model)
+│   ├── index.ts        // 入口，导出 init() 钩子
+│   ├── constants.ts    // 常量：扩展名/LOGO/本地化字典/模型与来源映射
+│   ├── i18n.ts         // 本地化助手 L()
+│   ├── cache.ts        // IndexedDB 背景图缓存
+│   ├── meta.ts         // 预设元数据读写 (readMeta/saveMeta)
+│   ├── presetList.ts   // 视图模型构建 (buildPresetList)
+│   ├── editModal.ts    // 元数据编辑弹窗 (openEditModal)
+│   ├── presetCards.ts  // 主弹窗逻辑 (openPresetCards)
+│   ├── init.ts         // 侧栏按钮与 /presetcards 斜杠命令
+│   ├── globals.d.ts    // 全局变量声明
+│   └── types/st.d.ts   // SillyTavern 模块自包含类型声明
+├── dist/               // 构建产物 (Vite 输出，提交进 git)
 ├── style.css           // UI 视觉样式 (View - CSS)
 ├── cards.html          // 预设卡片网格的 Handlebars 模板 (View - HTML)
 ├── edit.html           // 元数据/模型标签编辑弹窗的 Handlebars 模板
@@ -49,30 +64,41 @@ preset-cards/
 └── llm-logos/          // 存放各主流模型厂商的 SVG/PNG 标志文件
 ```
 
+### 构建 (Build)
+
+源码使用 TypeScript + Vite 编写，构建后输出到 `dist/index.js`（manifest 的 `js` 字段即指向它）。仓库中的 `dist/` 已提交，普通用户直接安装即可使用，无需本地构建。
+
+```bash
+npm install        # 安装依赖
+npm run build      # 生产构建 (输出 dist/index.js)
+npm run watch      # 开发模式：监听 src/ 变更自动重建
+npm run typecheck  # 仅做类型检查 (tsc --noEmit)
+```
+
 ---
 
 ## ⚙️ 核心模块实现细节 (Implementation Details)
 
 ### 1. 动态路径与模块加载 (Dynamic Module Resolution)
-为了解决第三方拓展目录 (`third-party`) 带来的模块相对路径解析崩溃问题，`index.js` 的所有核心 API 引入均采用了 ST 虚拟服务器的**绝对根目录 (`/`) 模式**：
-```javascript
-import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
-import { openai_settings } from '/scripts/openai.js';
+为了解决第三方拓展目录 (`third-party`) 带来的模块相对路径解析崩溃问题，源码统一使用 ST 生态的 `@sillytavern/*` 引入惯例，构建时由 Vite 的 resolver 重写为 ST 虚拟服务器的**绝对根目录 (`/`) 模式**：
+```typescript
+import { openai_settings } from '@sillytavern/scripts/openai';
+// 构建后等价于: import { openai_settings } from '/scripts/openai.js';
 ```
-同时，为了准确定位 `llm-logos` 图片和 `cards.html` 模板，代码中通过 `import.meta.url` 动态解析了插件的真实名称，防范了用户乱改文件夹名字引发的 BUG：
-```javascript
+同时，为了准确定位 `llm-logos` 图片和 `cards.html` 模板，代码中通过 `import.meta.url` 动态解析了插件的真实名称，防范了用户乱改文件夹名字引发的 BUG（正则已兼容 `dist/` 子目录产物）：
+```typescript
 let EXTENSION_NAME = 'preset-cards';
 const url = new URL(import.meta.url);
-const match = url.pathname.match(/\/scripts\/extensions\/(.*?)\/index\.js/);
+const match = url.pathname.match(/\/scripts\/extensions\/(.*?)\/(?:dist\/)?index\.js/);
 if (match) EXTENSION_NAME = match[1];
 ```
 
 ### 2. 数据持久化机制 (Metadata Persistence)
 ST 将文本生成的参数统一存储在 `openai_settings` 对象数组中。为了不破坏 ST 的原生数据结构，此扩展的所有专属数据（描述、适配模型、子配置快照）都被**隔离包裹**在每个预设的 `extensions['preset-cards']` 字段内。
 
-`index.js` 提供了高度封装的读写辅助函数：
+`src/meta.ts` 提供了高度封装的读写辅助函数：
 - `readMeta(preset)`: 尝试读取 `preset.extensions[EXTENSION_KEY]`，如果不存在则返回一套带默认值的骨架结构。
-- `saveMeta(name, index, meta)`: 将修改后的 `meta` 数据写入到对应的 `openai_settings` 索引中，并调用 ST 原生的 `/api/presets/openai/save` 端点将其持久化到硬盘，防止重启丢失。
+- `saveMeta(name, index, meta)`: 将修改后的 `meta` 数据写入到对应的 `openai_settings` 索引中，并调用 ST 原生的 `/api/presets/save` 端点将其持久化到硬盘，防止重启丢失。
 
 ### 3. 子配置快照算法 (Profile Snapshot System)
 **子配置**实际上是整个预设对象除 `extensions` 之外所有键值对的 JSON 序列化深拷贝（Deep Clone）。
