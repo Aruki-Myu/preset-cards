@@ -59,7 +59,25 @@ const LOCAL_DICT = {
     'Clear Cache': '清理缓存',
     'Clear all cached background images?': '确定要清理所有已缓存的背景图片吗？',
     'Cache cleared successfully': '缓存清理成功',
+    'Select modules to save in this snapshot:': '选择在此快照中保存的模块：',
+    'Generation Settings (Temp, Top P, etc.)': '生成参数 (温度、Top P 等核心参数)',
+    'Prompts & States (System Prompts, Positions, Toggles)': '提示词与条目状态 (内置提示词、条目位置与开关)',
 };
+
+// ─────────────────────────────────────────
+// Snapshot Modules Config
+// ─────────────────────────────────────────
+const SNAPSHOT_PROMPT_KEYS = [
+    'prompts', 'sysPrompt', 'userPrompt', 'jailbreak', 'impersonation_prompt', 'bias_string'
+];
+const SNAPSHOT_IGNORED_KEYS = [
+    'name', 'extensions', 'openai_model', 'claude_model', 'openrouter_model', 
+    'ai21_model', 'google_model', 'vertexai_model', 'mistralai_model', 'custom_model', 
+    'cohere_model', 'perplexity_model', 'groq_model', 'chutes_model', 'deepseek_model', 
+    'aimlapi_model', 'xai_model', 'pollinations_model', 'moonshot_model', 'fireworks_model', 
+    'cometapi_model', 'azure_openai_model', 'zai_model', 'siliconflow_model', 'workers_ai_model', 
+    'minimax_model'
+];
 
 // ─────────────────────────────────────────
 // Caching / IndexedDB
@@ -67,6 +85,7 @@ const LOCAL_DICT = {
 const CACHE_DB_NAME = 'PresetCardsCache';
 const CACHE_STORE_NAME = 'images';
 let cacheDb = null;
+const URL_CACHE = new Map();
 
 function initCacheDb() {
     return new Promise((resolve) => {
@@ -94,48 +113,64 @@ async function getCachedImageURL(url) {
     // Skip data URIs or local blob URIs
     if (url.startsWith('data:') || url.startsWith('blob:')) return url;
     
-    const db = await initCacheDb();
-    if (!db) return url;
+    if (URL_CACHE.has(url)) return URL_CACHE.get(url);
 
-    return new Promise((resolve) => {
-        const tx = db.transaction(CACHE_STORE_NAME, 'readonly');
-        const store = tx.objectStore(CACHE_STORE_NAME);
-        const req = store.get(url);
+    const promise = (async () => {
+        const db = await initCacheDb();
+        if (!db) return url;
 
-        req.onsuccess = async () => {
-            if (req.result) {
-                resolve(URL.createObjectURL(req.result));
-            } else {
-                try {
-                    const response = await fetch(url, { mode: 'cors' });
-                    if (!response.ok) throw new Error('Network response was not ok');
-                    const blob = await response.blob();
-                    
-                    const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
-                    writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
-                    
-                    resolve(URL.createObjectURL(blob));
-                } catch (err) {
-                    console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
-                    resolve(url);
+        return new Promise((resolve) => {
+            const tx = db.transaction(CACHE_STORE_NAME, 'readonly');
+            const store = tx.objectStore(CACHE_STORE_NAME);
+            const req = store.get(url);
+
+            req.onsuccess = async () => {
+                if (req.result) {
+                    resolve(URL.createObjectURL(req.result));
+                } else {
+                    try {
+                        const response = await fetch(url, { mode: 'cors' });
+                        if (!response.ok) throw new Error('Network response was not ok');
+                        const blob = await response.blob();
+                        
+                        const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
+                        writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
+                        
+                        resolve(URL.createObjectURL(blob));
+                    } catch (err) {
+                        console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
+                        resolve(url);
+                    }
                 }
-            }
-        };
-        req.onerror = () => resolve(url);
-    });
+            };
+            req.onerror = () => resolve(url);
+        });
+    })();
+    URL_CACHE.set(url, promise);
+    return promise;
 }
 
-function applyCachedBackgrounds(container) {
-    container.find('.preset_card_bg_image').each(async function() {
-        const url = $(this).data('bg-url');
-        if (url && !$(this).css('background-image').includes('url(')) {
-            const cachedUrl = await getCachedImageURL(url);
-            $(this).css('background-image', `url('${cachedUrl}')`);
-        }
+async function applyCachedBackgrounds(container) {
+    const bgElements = container.find('.preset_card_bg_image').filter(function() {
+        return $(this).data('bg-url') && !$(this).css('background-image').includes('url(');
     });
+
+    const urlGroups = {};
+    bgElements.each(function() {
+        const url = $(this).data('bg-url');
+        if (!urlGroups[url]) urlGroups[url] = [];
+        urlGroups[url].push(this);
+    });
+
+    for (const [url, elements] of Object.entries(urlGroups)) {
+        getCachedImageURL(url).then(cachedUrl => {
+            elements.forEach(el => $(el).css('background-image', `url('${cachedUrl}')`));
+        });
+    }
 }
 
 async function clearImageCache() {
+    URL_CACHE.clear();
     const db = await initCacheDb();
     if (!db) return;
     return new Promise((resolve) => {
@@ -169,6 +204,8 @@ const AVAILABLE_MODELS = [
 ];
 
 /** Map model id → full logo URL */
+const AVAILABLE_MODELS_MAP = new Map(AVAILABLE_MODELS.map(m => [m.id, m]));
+
 const MODEL_LOGO_MAP = Object.fromEntries(
     AVAILABLE_MODELS.map(m => [m.id, LOGO_BASE + m.logo]),
 );
@@ -347,7 +384,7 @@ function buildPresetList() {
 
         // Build model chips from metadata
         const modelChips = meta.models.map(mid => {
-            const def = AVAILABLE_MODELS.find(m => m.id === mid);
+            const def = AVAILABLE_MODELS_MAP.get(mid);
             return def ? { label: def.label, logo: LOGO_BASE + def.logo } : { label: mid, logo: '' };
         });
 
@@ -379,9 +416,9 @@ function buildPresetList() {
     return presets;
 }
 
-function getCardsTemplateContext() {
+function getCardsTemplateContext(cachedPresets) {
     return {
-        presets: buildPresetList(),
+        presets: cachedPresets || buildPresetList(),
         i18n: {
             searchPlaceholder: L('Search presets...'),
             multiSelect: L('Multi-Select'),
@@ -475,7 +512,7 @@ async function openPresetCards() {
     let batchSelectedCards = new Set();
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
 
-    const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+    const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext(presets));
     const dialog = $(html);
 
     if (isConciseMode) {
@@ -884,8 +921,26 @@ async function openPresetCards() {
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
         
-        const profileName = await Popup.show.input(L('Configuration name:'), L('e.g., GPT-4 Optimization'));
+        const nameInput = $('<input type="text" class="text_pole" style="margin-bottom:15px;">');
+        nameInput.attr('placeholder', L('e.g., GPT-4 Optimization'));
+        const genCheck = $('<input type="checkbox" checked>');
+        const promptCheck = $('<input type="checkbox" checked>');
+
+        const container = $('<div style="display:flex;flex-direction:column;gap:5px;text-align:left;"></div>');
+        container.append($('<label>').html(`<b>${L('Configuration name:')}</b>`));
+        container.append(nameInput);
+        container.append($('<label style="margin-top:5px;margin-bottom:5px;">').html(`<b>${L('Select modules to save in this snapshot:')}</b>`));
+        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
+        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
+
+        const confirm = await callGenericPopup(container, POPUP_TYPE.CONFIRM);
+        if (!confirm) return;
+        
+        const profileName = nameInput.val().trim();
         if (!profileName) return;
+
+        const saveGen = genCheck.prop('checked');
+        const savePrompt = promptCheck.prop('checked');
 
         let loadingToast = null;
         if (oai_settings.preset_settings_openai === name) {
@@ -899,9 +954,18 @@ async function openPresetCards() {
         const meta = readMeta(preset);
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
         
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
+        // Snapshot the current preset settings based on selected modules
+        const snapshot = {};
+        for (const key of Object.keys(preset)) {
+            if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
+            
+            const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
+            if (isPromptKey && savePrompt) {
+                snapshot[key] = structuredClone(preset[key]);
+            } else if (!isPromptKey && saveGen) {
+                snapshot[key] = structuredClone(preset[key]);
+            }
+        }
         
         profiles.push({
             id: Date.now().toString() + Math.floor(Math.random() * 1000),
@@ -958,8 +1022,20 @@ async function openPresetCards() {
         const name = card.attr('data-preset-name');
         const idx = card.data('preset-index');
         
-        const confirm = await callGenericPopup(L('Overwrite this configuration with current settings?'), POPUP_TYPE.CONFIRM);
+        const genCheck = $('<input type="checkbox" checked>');
+        const promptCheck = $('<input type="checkbox" checked>');
+
+        const container = $('<div style="display:flex;flex-direction:column;gap:5px;text-align:left;"></div>');
+        container.append($('<label style="margin-bottom:10px;">').html(`<b>${L('Overwrite this configuration with current settings?')}</b>`));
+        container.append($('<label style="margin-bottom:5px;">').html(`<b>${L('Select modules to save in this snapshot:')}</b>`));
+        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(genCheck).append(L('Generation Settings (Temp, Top P, etc.)')));
+        container.append($('<label>').css({display:'flex', alignItems:'center', gap:'8px', cursor:'pointer'}).append(promptCheck).append(L('Prompts & States (System Prompts, Positions, Toggles)')));
+
+        const confirm = await callGenericPopup(container, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
+
+        const saveGen = genCheck.prop('checked');
+        const savePrompt = promptCheck.prop('checked');
 
         let loadingToast = null;
         if (oai_settings.preset_settings_openai === name) {
@@ -974,9 +1050,18 @@ async function openPresetCards() {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
+        // Snapshot the current preset settings based on selected modules
+        const snapshot = {};
+        for (const key of Object.keys(preset)) {
+            if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
+            
+            const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
+            if (isPromptKey && savePrompt) {
+                snapshot[key] = structuredClone(preset[key]);
+            } else if (!isPromptKey && saveGen) {
+                snapshot[key] = structuredClone(preset[key]);
+            }
+        }
         
         profile.settings = snapshot;
         
