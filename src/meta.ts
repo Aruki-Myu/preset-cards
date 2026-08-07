@@ -15,13 +15,23 @@ export interface PresetProfileV1 {
     formatVersion?: 1;
 }
 
-/** 主 profile：记录当前预设全部 prompts 的开关，不存值、不存扩展。 */
+/** prompt 值字段（全可选，向后兼容旧数据）。 */
+export interface PromptFields {
+    content?: string;
+    name?: string;
+    role?: string;
+    injection_position?: number;
+    injection_depth?: number;
+    injection_order?: number;
+}
+
+/** 主 profile：记录当前预设全部 prompts 的开关，可附带值字段（fields），不存扩展。 */
 export interface PromptBaseProfile {
     formatVersion: 2;
     kind: 'prompt_base';
     id: string;
     name: string;
-    prompts: { identifier: string; enabled: boolean }[];
+    prompts: { identifier: string; enabled: boolean; fields?: PromptFields }[];
 }
 
 /** 派生 profile 的一条差异：开关差异 + 值差异（content/role/name 等）。 */
