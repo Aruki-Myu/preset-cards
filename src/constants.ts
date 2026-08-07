@@ -159,6 +159,8 @@ export const LOCAL_DICT: Record<string, string> = {
     'No default baseline available': '没有可用的默认基准',
     'Configuration reset': '配置已重置',
     'This profile type cannot be reset': '此类型配置无法重置',
+    'This profile type cannot be derived': '此类型配置无法派生',
+    'Cannot derive from a legacy profile': '无法从旧版配置派生',
     'Base': '主',
     'Delta': '派生',
     'Has value changes': '有值变更',

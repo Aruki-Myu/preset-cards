@@ -16,7 +16,7 @@ import {
     type PromptBaseProfile,
     type PromptDeltaProfile,
 } from './meta.js';
-import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildPromptToggleSnapshot, resolveProfileStates, statesToChanges } from './promptToggle.js';
+import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildPromptToggleSnapshot, resolveParentStates, resolveProfileStates, statesToChanges } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -658,7 +658,7 @@ export async function openPresetCards(): Promise<void> {
             if (isPromptBaseProfile(profile)) {
                 profile.prompts = states;
             } else if (isPromptDeltaProfile(profile)) {
-                const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+                const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
                 if (parentStates.length > 0) {
                     profile.changes = statesToChanges(states, parentStates, profile.changes);
                 } else {
@@ -672,30 +672,23 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
         } else {
-            // create a new delta subprofile
-            const base = isPromptBaseProfile(profile)
-                ? profile
-                : (isPromptDeltaProfile(profile)
-                    ? meta.profiles.find((b): b is PromptBaseProfile => isPromptBaseProfile(b) && b.id === profile.baseId)
-                    : undefined);
-            if (!base) {
-                toastr.warning(L('Base profile not found, cannot create derived configuration'));
+            // create a new delta subprofile derived from the edited profile (base or delta)
+            if (!isPromptBaseProfile(profile) && !isPromptDeltaProfile(profile)) {
+                toastr.warning(L('This profile type cannot be derived'));
                 return;
             }
             const deltaName = await Popup.show.input(L('Derived profile name:'), '');
             if (!deltaName) return;
 
             const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-            const parentStates = isPromptDeltaProfile(profile)
-                ? resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[])
-                : base.prompts;
+            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             const changes = statesToChanges(states, parentStates, isPromptDeltaProfile(profile) ? profile.changes : []);
             profiles.push({
                 formatVersion: 2,
                 kind: 'prompt_delta',
                 id: Date.now().toString() + Math.floor(Math.random() * 1000),
                 name: deltaName,
-                baseId: base.id,
+                baseId: profile.id,
                 changes,
             });
             meta.profiles = profiles;
@@ -743,7 +736,7 @@ export async function openPresetCards(): Promise<void> {
             refreshActivePresetUI(name);
         } else if (isPromptDeltaProfile(profile)) {
             // 派生 profile：基于解析后的 parent 状态重新生成差异
-            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             if (parentStates.length === 0) {
                 toastr.warning(L('Base profile not found, cannot update derived configuration'));
                 return;
@@ -777,6 +770,11 @@ export async function openPresetCards(): Promise<void> {
         const meta = readMeta(preset);
         const parent = meta.profiles.find((b) => b.id === String(profileId));
         if (!parent) return;
+
+        if (!isPromptBaseProfile(parent) && !isPromptDeltaProfile(parent)) {
+            toastr.warning(L('Cannot derive from a legacy profile'));
+            return;
+        }
 
         const deltaName = await Popup.show.input(L('Derived profile name:'), '');
         if (!deltaName) return;
@@ -820,7 +818,7 @@ export async function openPresetCards(): Promise<void> {
 
         if (isPromptDeltaProfile(profile)) {
             // 派生：回退到其上级（base 或上层 delta）；若无上级则回退到隐藏默认
-            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             if (parentStates.length > 0) {
                 applyBaseProfile(preset, {
                     formatVersion: 2,

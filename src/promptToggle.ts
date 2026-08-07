@@ -1,4 +1,4 @@
-import { isPromptBaseProfile } from './meta.js';
+import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile } from './meta.js';
 
 /**
@@ -59,11 +59,16 @@ export function resolveProfileStates(
     allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
     seen: Set<string> = new Set(),
 ): { identifier: string; enabled: boolean }[] {
-    if (seen.has(profile.id)) return []; // 防环
+    if (!profile || seen.has(profile.id)) return []; // 防环
     seen.add(profile.id);
 
     if (isPromptBaseProfile(profile)) {
         return structuredClone(profile.prompts);
+    }
+
+    // 非 delta（如 v1 全量快照或未知类型）无父链可解析，安全返回空，绝不抛错
+    if (!isPromptDeltaProfile(profile)) {
+        return [];
     }
 
     const parent = allProfiles.find((p) => p.id === profile.baseId);
@@ -79,6 +84,19 @@ export function resolveProfileStates(
     }
 
     return [...map.entries()].map(([identifier, enabled]) => ({ identifier, enabled }));
+}
+
+/**
+ * 解析 delta 的直接父 profile（按 baseId 查找，递归走完父链）的有效开关状态。
+ * 父缺失或为 v1 快照（无法作为差异基线）时返回空数组。
+ */
+export function resolveParentStates(
+    profile: PromptDeltaProfile,
+    allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
+): { identifier: string; enabled: boolean }[] {
+    const parent = allProfiles.find((p) => p.id === profile.baseId);
+    if (!parent) return [];
+    return resolveProfileStates(parent, allProfiles);
 }
 
 /**
