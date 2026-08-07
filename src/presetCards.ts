@@ -131,7 +131,6 @@ export async function openPresetCards(): Promise<void> {
         if (!prompt) return null;
 
         const isMarker = !!prompt.marker;
-        const positionOptions: [string, string][] = [['0', L('Relative')], ['1', L('In-chat')]];
 
         const container = $('<div class="preset_cards_prompt_edit_form"></div>');
         container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
@@ -167,34 +166,10 @@ export async function openPresetCards(): Promise<void> {
         contentWrap.append(contentInput);
         container.append(contentWrap);
 
-        container.append($('<div class="preset_cards_prompt_edit_section_title"></div>').text(L('Injection settings')));
-
-        const posWrap = $('<div class="preset_edit_field"></div>');
-        posWrap.append($('<label></label>').text(L('Position')));
-        const posSelect = $('<select class="text_pole"></select>');
-        for (const [value, label] of positionOptions) {
-            const option = $('<option></option>').attr('value', value).text(label);
-            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
-            posSelect.append(option);
-        }
-        posWrap.append(posSelect);
-        container.append(posWrap);
-
-        const depthWrap = $('<div class="preset_edit_field"></div>');
-        depthWrap.append($('<label></label>').text(L('Depth')));
-        const depthInput = $('<input type="number">').val(prompt.injection_depth ?? 4);
-        depthWrap.append(depthInput);
-        container.append(depthWrap);
-
-        const orderWrap = $('<div class="preset_edit_field"></div>');
-        orderWrap.append($('<label></label>').text(L('Order')));
-        const orderInput = $('<input type="number">').val(prompt.injection_order ?? 100);
-        orderWrap.append(orderInput);
-        container.append(orderWrap);
-
         const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
             okButton: t`Save`,
             cancelButton: t`Cancel`,
+            allowVerticalScrolling: true,
         });
         if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
 
@@ -203,16 +178,10 @@ export async function openPresetCards(): Promise<void> {
         const role = String(roleSelect.val() ?? 'system');
         const name = String(nameInput.val() ?? '');
         const content = String(contentInput.val() ?? '');
-        const position = Number(posSelect.val() ?? 0);
-        const depth = Number(depthInput.val() ?? 4);
-        const order = Number(orderInput.val() ?? 100);
 
         if (role !== (prompt.role ?? 'system')) fields.role = role;
-        if (name && name !== (prompt.name ?? '')) fields.name = name;
+        if (name !== (prompt.name ?? '')) fields.name = name;
         if (!isMarker && content !== (prompt.content ?? '')) fields.content = content;
-        if (position !== (prompt.injection_position ?? 0)) fields.injection_position = position;
-        if (depth !== (prompt.injection_depth ?? 4)) fields.injection_depth = depth;
-        if (order !== (prompt.injection_order ?? 100)) fields.injection_order = order;
 
         return Object.keys(fields).length > 0 ? fields : null;
     }
@@ -890,7 +859,9 @@ export async function openPresetCards(): Promise<void> {
 
         if (choice === 'update') {
             if (isPromptBaseProfile(profile)) {
-                // enabled 全量合并；fields 仅对本次编辑的条目，与编辑初值无净变化时清除
+                // enabled 全量合并；fields 仅对本次编辑的条目（与编辑初值无净变化时清除），
+                // 其余条目保留既有 fields，避免重建快照时丢失此前已保存的值编辑
+                const previousPrompts = profile.prompts;
                 profile.prompts = snapshot.map((s) => {
                     const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
                         identifier: s.identifier,
@@ -899,6 +870,9 @@ export async function openPresetCards(): Promise<void> {
                     const session = sessionEdits.get(s.identifier);
                     if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
                         entry.fields = s.fields;
+                    } else if (!session) {
+                        const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
+                        if (prior) entry.fields = prior;
                     }
                     return entry;
                 });

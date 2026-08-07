@@ -2,14 +2,13 @@ import { promptManager } from '@sillytavern/scripts/openai';
 import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
-/** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。 */
+/** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。
+ * 注入参数（injection_position/depth/order）为内部字段，UI 不编辑，也不随 profile 捕获，
+ * 否则加载 profile 时会用旧快照覆盖用户此后在 Prompt Manager 里调整的注入值。 */
 export const PROMPT_FIELD_WHITELIST: (keyof PromptFields)[] = [
     'content',
     'name',
     'role',
-    'injection_position',
-    'injection_depth',
-    'injection_order',
 ];
 
 /**
