@@ -907,10 +907,17 @@ export async function openPresetCards(): Promise<void> {
                 prompts: profile.prompts,
             }, null, 4);
         } else if (isPromptDeltaProfile(profile)) {
+            // 导出自包含：附上 base 快照，导入时可完整还原
+            const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                isPromptBaseProfile(b) && b.id === profile.baseId);
             data = JSON.stringify({
                 kind: profile.kind,
                 formatVersion: profile.formatVersion,
                 baseId: profile.baseId,
+                base: base ? {
+                    name: base.name,
+                    prompts: base.prompts,
+                } : undefined,
                 changes: profile.changes,
             }, null, 4);
         } else {
@@ -955,7 +962,31 @@ export async function openPresetCards(): Promise<void> {
                         prompts: parsed.prompts,
                     });
                 } else if (parsed && parsed.kind === 'prompt_delta' && Array.isArray(parsed.changes)) {
-                    const baseId = typeof parsed.baseId === 'string' ? parsed.baseId : '';
+                    // 若文件带 base 快照：先复用（内容相同）或新建 main，再挂 delta
+                    let baseId = '';
+                    const importedBase = parsed.base as { name?: string; prompts?: { identifier: string; enabled: boolean }[] } | undefined;
+                    if (importedBase && Array.isArray(importedBase.prompts)) {
+                        const existing = profiles.find((b): b is PromptBaseProfile =>
+                            isPromptBaseProfile(b) && b.name === (importedBase.name || profileName)
+                            && b.prompts.length === importedBase.prompts!.length
+                            && b.prompts.every((e, i) => e.identifier === importedBase.prompts![i].identifier && e.enabled === importedBase.prompts![i].enabled));
+                        if (existing) {
+                            baseId = existing.id;
+                        } else {
+                            const baseIdNew = Date.now().toString() + Math.floor(Math.random() * 1000);
+                            profiles.push({
+                                formatVersion: 2,
+                                kind: 'prompt_base',
+                                id: baseIdNew,
+                                name: importedBase.name || profileName,
+                                prompts: importedBase.prompts,
+                            });
+                            baseId = baseIdNew;
+                        }
+                    } else {
+                        baseId = typeof parsed.baseId === 'string' ? parsed.baseId : '';
+                    }
+
                     profiles.push({
                         formatVersion: 2,
                         kind: 'prompt_delta',
