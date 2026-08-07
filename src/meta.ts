@@ -8,10 +8,47 @@ export type Preset = Record<string, any> & {
     extensions?: Record<string, any>;
 };
 
-export interface PresetProfile {
+export interface PresetProfileV1 {
     id: string;
     name: string;
     settings: Record<string, any>;
+    formatVersion?: 1;
+}
+
+/** 主 profile：记录当前预设全部 prompts 的开关，不存值、不存扩展。 */
+export interface PromptBaseProfile {
+    formatVersion: 2;
+    kind: 'prompt_base';
+    id: string;
+    name: string;
+    prompts: { identifier: string; enabled: boolean }[];
+}
+
+/** 派生 profile 的一条差异：开关差异 + 值差异（content/role/name 等）。 */
+export interface PromptDeltaChange {
+    identifier: string;
+    enabled?: boolean;
+    fields?: Record<string, any>;
+}
+
+/** 派生 profile：相对主 profile 的差异，加载时「主 + 子」叠加应用。 */
+export interface PromptDeltaProfile {
+    formatVersion: 2;
+    kind: 'prompt_delta';
+    id: string;
+    name: string;
+    baseId: string;
+    changes: PromptDeltaChange[];
+}
+
+export type PresetProfile = PresetProfileV1 | PromptBaseProfile | PromptDeltaProfile;
+
+export function isPromptBaseProfile(profile: PresetProfile): profile is PromptBaseProfile {
+    return (profile as { kind?: string }).kind === 'prompt_base';
+}
+
+export function isPromptDeltaProfile(profile: PresetProfile): profile is PromptDeltaProfile {
+    return (profile as { kind?: string }).kind === 'prompt_delta';
 }
 
 export interface PresetMeta {

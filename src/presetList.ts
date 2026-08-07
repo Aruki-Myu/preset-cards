@@ -1,6 +1,6 @@
 import { oai_settings, openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
-import { readMeta, type Preset, type PresetProfile } from './meta.js';
+import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile } from './meta.js';
 import { L } from './i18n.js';
 
 export interface ModelChip {
@@ -58,7 +58,18 @@ export function buildPresetList(): PresetCardModel[] {
         // Read custom metadata
         const meta = readMeta(preset);
 
-        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+        // Decorate each profile row with a type indicator so cards.html can render
+        // [Base] / [Delta] badges and the derive button.
+        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean };
+        const profiles: PresetProfile[] = (Array.isArray(meta.profiles) ? meta.profiles : []).map((p) => {
+            const row: ProfileRow = {
+                ...p,
+                isBase: isPromptBaseProfile(p),
+                isDelta: isPromptDeltaProfile(p),
+                isV1: !isPromptBaseProfile(p) && !isPromptDeltaProfile(p),
+            };
+            return row;
+        });
 
         // Build model chips from metadata
         const modelChips = meta.models.map(mid => {
@@ -112,6 +123,10 @@ export function getCardsTemplateContext() {
             importConfig: L('Import configuration'),
             rename: L('Rename'),
             delete: L('Delete'),
+            addBaseConfig: L('Save Base Profile'),
+            derive: L('Derive Profile'),
+            base: L('Base'),
+            delta: L('Delta'),
         }
     };
 }

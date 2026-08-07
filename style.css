@@ -716,6 +716,38 @@
     border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
 }
 
+.preset_card_profile_name_wrap {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    flex: 1;
+    margin-right: 8px;
+}
+
+.preset_card_profile_badge {
+    font-size: 9px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    padding: 1px 5px;
+    border-radius: 4px;
+    line-height: 1.6;
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.preset_card_profile_badge.badge_base {
+    color: var(--SmartThemeQuoteColor);
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.12);
+    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.35);
+}
+
+.preset_card_profile_badge.badge_delta {
+    color: #e6a23c;
+    background: rgba(230, 162, 60, 0.12);
+    border: 1px solid rgba(230, 162, 60, 0.35);
+}
+
 .preset_card_profile_name {
     flex-grow: 1;
     cursor: pointer;
@@ -723,6 +755,7 @@
     overflow: hidden;
     text-overflow: ellipsis;
     padding-right: 8px;
+    min-width: 0;
 }
 
 .preset_card_profile_name:hover {
@@ -758,7 +791,8 @@
 
 .preset_card_profile_edit:hover,
 .preset_card_profile_update:hover,
-.preset_card_profile_export:hover {
+.preset_card_profile_export:hover,
+.preset_card_profile_derive:hover {
     color: var(--SmartThemeQuoteColor);
 }
 

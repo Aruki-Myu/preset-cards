@@ -84,4 +84,7 @@ declare module '@sillytavern/scripts/openai' {
         extensions?: Record<string, unknown>;
         [key: string]: unknown;
     };
+    export const promptManager: {
+        render(afterTryGenerate?: boolean): void;
+    } | null;
 }

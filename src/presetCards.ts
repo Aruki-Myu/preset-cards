@@ -1,13 +1,21 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
-import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate, promptManager } from '@sillytavern/scripts/openai';
 import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
 import { eventSource, event_types } from '@sillytavern/scripts/events';
 import { AVAILABLE_MODELS, EXTENSION_NAME, LOGO_BASE } from './constants.js';
 import { L } from './i18n.js';
-import { readMeta, saveMeta, type Preset } from './meta.js';
+import {
+    isPromptBaseProfile,
+    isPromptDeltaProfile,
+    readMeta,
+    saveMeta,
+    type Preset,
+    type PromptBaseProfile,
+} from './meta.js';
+import { applyBaseProfile, applyDeltaProfile, buildDeltaChanges, buildPromptToggleSnapshot } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -31,6 +39,15 @@ export async function openPresetCards(): Promise<void> {
     function updateCount(visible: number, total: number): void {
         const el = dialog.find('#preset_cards_count');
         el.text(visible === total ? `${total} presets` : `${visible} / ${total}`);
+    }
+
+    // If the preset is currently active, reload it natively and refresh the Prompt Manager list.
+    // promptManager may be absent in some ST builds, hence the optional chain.
+    function refreshActivePresetUI(presetName: string): void {
+        if (oai_settings.preset_settings_openai === presetName) {
+            $('#settings_preset_openai').trigger('change');
+            promptManager?.render?.(false);
+        }
     }
 
     // ---- Search ----
@@ -77,16 +94,28 @@ export async function openPresetCards(): Promise<void> {
             </div>`);
 
             row.on('click', async function () {
-                const ext = preset.extensions;
-                Object.assign(preset, p.settings);
-                preset.extensions = ext;
+                const profile = meta.profiles.find(pr => pr.id === String(row.data('profile-id')));
+                if (!profile) return;
+
+                if (isPromptBaseProfile(profile)) {
+                    applyBaseProfile(preset, profile);
+                } else if (isPromptDeltaProfile(profile)) {
+                    const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                        isPromptBaseProfile(b) && b.id === profile.baseId);
+                    if (!base) {
+                        toastr.warning(L('Base profile not found, applying changes only'));
+                    }
+                    applyDeltaProfile(preset, profile, base);
+                } else {
+                    const ext = preset.extensions;
+                    Object.assign(preset, profile.settings);
+                    preset.extensions = ext;
+                }
 
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration loaded'));
 
-                if (oai_settings.preset_settings_openai === name) {
-                    $('#settings_preset_openai').trigger('change');
-                }
+                refreshActivePresetUI(name);
 
                 $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
             });
@@ -461,6 +490,46 @@ export async function openPresetCards(): Promise<void> {
         dialog.find('#preset_cards_search').trigger('input');
     });
 
+    // ---- Profiles: Save Base Profile ----
+    dialog.on('click', '.preset_card_add_base_profile_btn', async function (e) {
+        e.stopPropagation();
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const profileName = await Popup.show.input(L('Base profile name:'), '');
+        if (!profileName) return;
+
+        let loadingToast: JQuery | null = null;
+        if (oai_settings.preset_settings_openai === name) {
+            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
+            $('#update_oai_preset').trigger('click');
+            await new Promise<void>(r => setTimeout(r, 800));
+            toastr.clear(loadingToast);
+        }
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+
+        profiles.push({
+            formatVersion: 2,
+            kind: 'prompt_base',
+            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+            name: profileName,
+            prompts: buildPromptToggleSnapshot(preset),
+        });
+
+        meta.profiles = profiles;
+        await saveMeta(name, idx, meta);
+        toastr.success(L('Base profile saved'));
+
+        // Refresh UI
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        dialog.find('#preset_cards_search').trigger('input');
+    });
+
     // ---- Profiles: Load Configuration ----
     dialog.on('click', '.preset_card_profile_name', async function (e) {
         e.stopPropagation();
@@ -475,19 +544,44 @@ export async function openPresetCards(): Promise<void> {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        // Merge profile settings into the preset, while preserving extensions
-        const ext = preset.extensions;
-        Object.assign(preset, profile.settings);
-        preset.extensions = ext;
+        if (isPromptBaseProfile(profile)) {
+            // 主 profile：只回写 prompts 开关并同步 prompt_order
+            applyBaseProfile(preset, profile);
 
-        // Save to disk so changes persist
-        await saveMeta(name, idx, meta);
+            // Save to disk so changes persist
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration loaded'));
+            refreshActivePresetUI(name);
+        } else if (isPromptDeltaProfile(profile)) {
+            // 派生 profile：主 + 子叠加应用
+            const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                isPromptBaseProfile(b) && b.id === profile.baseId);
+            if (!base) {
+                toastr.warning(L('Base profile not found, applying changes only'));
+            }
+            const { missing } = applyDeltaProfile(preset, profile, base);
+            if (missing.length > 0) {
+                toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
+            }
 
-        toastr.success(L('Configuration loaded'));
+            // Save to disk so changes persist
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration loaded'));
+            refreshActivePresetUI(name);
+        } else {
+            // v1 全量快照：合并 settings，保留 extensions
+            const ext = preset.extensions;
+            Object.assign(preset, profile.settings);
+            preset.extensions = ext;
 
-        // If this is the active preset, trigger a native UI reload
-        if (oai_settings.preset_settings_openai === name) {
-            $('#settings_preset_openai').trigger('change');
+            // Save to disk so changes persist
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration loaded'));
+
+            // If this is the active preset, trigger a native UI reload
+            if (oai_settings.preset_settings_openai === name) {
+                $('#settings_preset_openai').trigger('change');
+            }
         }
     });
 
@@ -516,14 +610,73 @@ export async function openPresetCards(): Promise<void> {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
+        if (isPromptBaseProfile(profile)) {
+            // 主 profile：重新采集开关清单覆盖
+            profile.prompts = buildPromptToggleSnapshot(preset);
 
-        profile.settings = snapshot;
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration updated'));
+            refreshActivePresetUI(name);
+        } else if (isPromptDeltaProfile(profile)) {
+            // 派生 profile：重新基于主 profile 生成差异
+            const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                isPromptBaseProfile(b) && b.id === profile.baseId);
+            if (!base) {
+                toastr.warning(L('Base profile not found, cannot update derived configuration'));
+                return;
+            }
+            profile.changes = buildDeltaChanges(preset, base);
 
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration updated'));
+            refreshActivePresetUI(name);
+        } else {
+            // v1 全量快照
+            const snapshot = structuredClone(preset);
+            delete snapshot.extensions; // Don't nest extensions
+            profile.settings = snapshot;
+
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration updated'));
+        }
+    });
+
+    // ---- Profiles: Derive from Base ----
+    dialog.on('click', '.preset_card_profile_derive', async function (e) {
+        e.stopPropagation();
+        const row = $(this).closest('.preset_card_profile_row');
+        const profileId = row.data('profile-id');
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const base = meta.profiles.find((b): b is PromptBaseProfile =>
+            isPromptBaseProfile(b) && b.id === String(profileId));
+        if (!base) return;
+
+        const deltaName = await Popup.show.input(L('Derived profile name:'), '');
+        if (!deltaName) return;
+
+        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+        profiles.push({
+            formatVersion: 2,
+            kind: 'prompt_delta',
+            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+            name: deltaName,
+            baseId: base.id,
+            changes: [], // 初始为空数组：与主 profile 完全相同，后续通过「覆盖」更新差异
+        });
+
+        meta.profiles = profiles;
         await saveMeta(name, idx, meta);
-        toastr.success(L('Configuration updated'));
+        toastr.success(L('Derived profile created'));
+
+        // Refresh UI
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        dialog.find('#preset_cards_search').trigger('input');
     });
 
     // ---- Profiles: Delete Configuration ----
@@ -537,8 +690,17 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
+        const profile = meta.profiles.find(p => p.id === String(profileId));
 
-        const confirm = await callGenericPopup(L('Delete this configuration?'), POPUP_TYPE.CONFIRM);
+        let confirmText = L('Delete this configuration?');
+        if (profile && isPromptBaseProfile(profile)) {
+            const dependents = meta.profiles.filter(p => isPromptDeltaProfile(p) && p.baseId === profile.id);
+            if (dependents.length > 0) {
+                confirmText += `\n${dependents.length} ${L('derived configuration(s) depend on this base and will only keep their changes after deletion')}`;
+            }
+        }
+
+        const confirm = await callGenericPopup(confirmText, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
         meta.profiles = (meta.profiles || []).filter(p => p.id !== String(profileId));
@@ -559,7 +721,23 @@ export async function openPresetCards(): Promise<void> {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        const data = JSON.stringify(profile.settings, null, 4);
+        let data: string;
+        if (isPromptBaseProfile(profile)) {
+            data = JSON.stringify({
+                kind: profile.kind,
+                formatVersion: profile.formatVersion,
+                prompts: profile.prompts,
+            }, null, 4);
+        } else if (isPromptDeltaProfile(profile)) {
+            data = JSON.stringify({
+                kind: profile.kind,
+                formatVersion: profile.formatVersion,
+                baseId: profile.baseId,
+                changes: profile.changes,
+            }, null, 4);
+        } else {
+            data = JSON.stringify(profile.settings, null, 4);
+        }
         download(data, `${profile.name}.json`, 'application/json');
     });
 
@@ -579,7 +757,7 @@ export async function openPresetCards(): Promise<void> {
 
             try {
                 const text = await file.text();
-                const settings = JSON.parse(text) as Record<string, any>;
+                const parsed = JSON.parse(text) as Record<string, any>;
 
                 let defaultName = file.name.replace(/\.json$/i, '');
                 const profileName = await Popup.show.input(L('Configuration name:'), defaultName, defaultName);
@@ -588,12 +766,38 @@ export async function openPresetCards(): Promise<void> {
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+                const newId = Date.now().toString() + Math.floor(Math.random() * 1000);
 
-                profiles.push({
-                    id: Date.now().toString() + Math.floor(Math.random() * 1000),
-                    name: profileName,
-                    settings: settings
-                });
+                if (parsed && parsed.kind === 'prompt_base' && Array.isArray(parsed.prompts)) {
+                    profiles.push({
+                        formatVersion: 2,
+                        kind: 'prompt_base',
+                        id: newId,
+                        name: profileName,
+                        prompts: parsed.prompts,
+                    });
+                } else if (parsed && parsed.kind === 'prompt_delta' && Array.isArray(parsed.changes)) {
+                    const baseId = typeof parsed.baseId === 'string' ? parsed.baseId : '';
+                    profiles.push({
+                        formatVersion: 2,
+                        kind: 'prompt_delta',
+                        id: newId,
+                        name: profileName,
+                        baseId: baseId,
+                        changes: parsed.changes,
+                    });
+
+                    const baseExists = profiles.some(b => isPromptBaseProfile(b) && b.id === baseId);
+                    if (baseId && !baseExists) {
+                        toastr.warning(L('Base profile not found for this imported derived configuration'));
+                    }
+                } else {
+                    profiles.push({
+                        id: newId,
+                        name: profileName,
+                        settings: parsed
+                    });
+                }
 
                 meta.profiles = profiles;
                 await saveMeta(name, idx, meta);

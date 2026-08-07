@@ -11,6 +11,36 @@ try {
 
 export const EXTENSION_KEY = 'preset_cards';
 
+/** Keys in the preset object that map to a model name for each source */
+export const MODEL_KEYS: Record<string, string> = {
+    [chat_completion_sources.OPENAI]: 'openai_model',
+    [chat_completion_sources.CLAUDE]: 'claude_model',
+    [chat_completion_sources.OPENROUTER]: 'openrouter_model',
+    [chat_completion_sources.AI21]: 'ai21_model',
+    [chat_completion_sources.MAKERSUITE]: 'google_model',
+    [chat_completion_sources.VERTEXAI]: 'vertexai_model',
+    [chat_completion_sources.MISTRALAI]: 'mistralai_model',
+    [chat_completion_sources.CUSTOM]: 'custom_model',
+    [chat_completion_sources.COHERE]: 'cohere_model',
+    [chat_completion_sources.PERPLEXITY]: 'perplexity_model',
+    [chat_completion_sources.GROQ]: 'groq_model',
+    [chat_completion_sources.ELECTRONHUB]: 'electronhub_model',
+    [chat_completion_sources.CHUTES]: 'chutes_model',
+    [chat_completion_sources.NANOGPT]: 'nanogpt_model',
+    [chat_completion_sources.DEEPSEEK]: 'deepseek_model',
+    [chat_completion_sources.AIMLAPI]: 'aimlapi_model',
+    [chat_completion_sources.XAI]: 'xai_model',
+    [chat_completion_sources.POLLINATIONS]: 'pollinations_model',
+    [chat_completion_sources.MOONSHOT]: 'moonshot_model',
+    [chat_completion_sources.FIREWORKS]: 'fireworks_model',
+    [chat_completion_sources.COMETAPI]: 'cometapi_model',
+    [chat_completion_sources.AZURE_OPENAI]: 'azure_openai_model',
+    [chat_completion_sources.ZAI]: 'zai_model',
+    [chat_completion_sources.SILICONFLOW]: 'siliconflow_model',
+    [chat_completion_sources.WORKERS_AI]: 'workers_ai_model',
+    [chat_completion_sources.MINIMAX]: 'minimax_model',
+};
+
 /** 保存 profile 时可供勾选的字段分组（键为 settingsToUpdate 中的 preset 键）。 */
 export const PROFILE_FIELD_GROUPS: { id: string; label: string; keys: string[] }[] = [
     {
@@ -122,6 +152,19 @@ export const LOCAL_DICT: Record<string, string> = {
     'Clear Cache': '清理缓存',
     'Clear all cached background images?': '确定要清理所有已缓存的背景图片吗？',
     'Cache cleared successfully': '缓存清理成功',
+    'Save Base Profile': '保存主 profile',
+    'Derive Profile': '派生',
+    'Base': '主',
+    'Delta': '派生',
+    'Base profile name:': '主 profile 名称：',
+    'Base profile saved': '主 profile 已保存',
+    'Derived profile name:': '派生 profile 名称：',
+    'Derived profile created': '派生 profile 已创建',
+    'Base profile not found, applying changes only': '未找到主 profile，仅应用派生差异',
+    'Base profile not found, cannot update derived configuration': '未找到主 profile，无法更新派生配置',
+    'Base profile not found for this imported derived configuration': '导入的派生配置未找到对应的主 profile',
+    'Missing prompts skipped': '缺失的 prompt 已跳过',
+    'derived configuration(s) depend on this base and will only keep their changes after deletion': '个派生配置依赖此主配置，删除后将仅保留各自差异',
 };
 
 export interface ModelDef {
@@ -183,34 +226,4 @@ export const SOURCE_LOGO_MAP: Record<string, string> = {
     [chat_completion_sources.ZAI]: MODEL_LOGO_MAP['chatglm'],
     [chat_completion_sources.XAI]: MODEL_LOGO_MAP['grok'],
     [chat_completion_sources.MOONSHOT]: MODEL_LOGO_MAP['kimi'],
-};
-
-/** Keys in the preset object that map to a model name for each source */
-export const MODEL_KEYS: Record<string, string> = {
-    [chat_completion_sources.OPENAI]: 'openai_model',
-    [chat_completion_sources.CLAUDE]: 'claude_model',
-    [chat_completion_sources.OPENROUTER]: 'openrouter_model',
-    [chat_completion_sources.AI21]: 'ai21_model',
-    [chat_completion_sources.MAKERSUITE]: 'google_model',
-    [chat_completion_sources.VERTEXAI]: 'vertexai_model',
-    [chat_completion_sources.MISTRALAI]: 'mistralai_model',
-    [chat_completion_sources.CUSTOM]: 'custom_model',
-    [chat_completion_sources.COHERE]: 'cohere_model',
-    [chat_completion_sources.PERPLEXITY]: 'perplexity_model',
-    [chat_completion_sources.GROQ]: 'groq_model',
-    [chat_completion_sources.ELECTRONHUB]: 'electronhub_model',
-    [chat_completion_sources.CHUTES]: 'chutes_model',
-    [chat_completion_sources.NANOGPT]: 'nanogpt_model',
-    [chat_completion_sources.DEEPSEEK]: 'deepseek_model',
-    [chat_completion_sources.AIMLAPI]: 'aimlapi_model',
-    [chat_completion_sources.XAI]: 'xai_model',
-    [chat_completion_sources.POLLINATIONS]: 'pollinations_model',
-    [chat_completion_sources.MOONSHOT]: 'moonshot_model',
-    [chat_completion_sources.FIREWORKS]: 'fireworks_model',
-    [chat_completion_sources.COMETAPI]: 'cometapi_model',
-    [chat_completion_sources.AZURE_OPENAI]: 'azure_openai_model',
-    [chat_completion_sources.ZAI]: 'zai_model',
-    [chat_completion_sources.SILICONFLOW]: 'siliconflow_model',
-    [chat_completion_sources.WORKERS_AI]: 'workers_ai_model',
-    [chat_completion_sources.MINIMAX]: 'minimax_model',
 };
