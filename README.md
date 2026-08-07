@@ -1,68 +1,59 @@
 # Preset Cards for SillyTavern
 
-> 这是 **Dev-TS** 分支：已从原生 JS 重构为 **TypeScript + Vite** 构建的 SillyTavern 第三方扩展。
-> 功能说明与完整文档见 [`Preset-cards.md`](./Preset-cards.md)。
+将 ST 原生的下拉式 Chat Completion 预设管理器重做为可视化卡片网格的第三方扩展，并为每个预设提供**主/派生 profile（Base / Delta）**两级配置快照系统。
 
-**Preset Cards** 将 ST 原生的下拉式预设管理器重做为可视化卡片网格，支持**子配置快照（Profiles）**、模型适配标签、搜索/多选批量删除、导入导出脱敏等，为经常切换模型或测试参数的玩家提供高效工作流。
+## 功能特性
 
-## 特性
+- **卡片网格预览**：每张卡片显示名称、来源与模型、描述、适用模型标签、采样参数（Temperature / Top P / Top K / Context / Tokens）与背景图；按「当前激活优先、其余按名称」排序。
+- **搜索 / 多选批量删除**：实时按名称或描述过滤；多选模式（Multi-Select）批量删除预设。
+- **主 profile（Base）**：保存当前预设全部 prompt 的开关状态快照（`enabled`），可附带值字段（`fields`）。
+- **派生 profile（Delta）**：只保存相对上级的差异（`changes`），支持嵌套派生（Delta 可再派 Delta），加载时递归解析父链叠加应用，带防环保护。
+- **展开条目编辑开关**：点击 profile 展开条目列表，逐条切换 prompt 开关，改动实时写入预设实际值并同步 `prompt_order`。
+- **system_prompt / marker 条目不显示开关与编辑入口**：这些条目的内容由 ST 管理，仅普通 prompt 可切换、可编辑。
+- **点击条目编辑值**：弹出编辑窗口修改 content / name / role / position（`injection_position`）；marker 条目的内容框禁用。值差异写入 profile 的 `fields`。
+- **prompt 顺序上移 / 下移**：对活动预设的 `prompt_order` 重排（global 策略时显示全局提示，说明顺序作用于所有角色）。
+- **导入导出**：导出 Base 为 `{kind, formatVersion, prompts}`；导出 Delta 为自包含 JSON（附解析后的完整父快照），导入时按内容复用已有主 profile，否则自动新建。整卡导出预设时自动脱敏（剥离代理 URL、API Keys 等连接字段）。
+- **重置**：Delta 回退到上级（Base 或上层 Delta），Base 回退到隐藏的默认基准（`defaultSnapshot`，打开弹窗时自动回填）。
+- **保存二选一**：展开编辑后的保存弹窗让用户选择「更新当前 profile」或「新建为子配置（派生）」，后者直接生成相对当前 profile 的差异。
+- **简洁模式（Concise Mode）**：压缩卡片；简洁模式下长按卡片弹出该预设的 profile 列表快速切换。
+- **覆盖 / 派生 / 重命名 / 删除**：profile 支持覆盖为当前设置、派生、行内重命名与删除（删除带派生依赖的 Base 时会提示）。
+- **元数据编辑**：描述、适用模型标签（渲染厂商 Logo）、背景图 URL，支持背景图 IndexedDB 缓存与一键清理。
+- **中文界面**：读取 ST 全局语言设置自动切换中英文（内置中英词典，无需改动 ST 的 i18n）。
 
-- 可视化卡片网格，支持实时搜索、多选批量删除
-- 子配置快照系统（Profiles）：在单个预设下保存/一键加载多套参数状态
-- 模型适配标签：勾选适用模型并渲染厂商 Logo
-- 完整预设 / 单子配置导出导入，导出自动脱敏（剥离代理 URL、API Keys 等）
-- 原生中英双语，跟随 ST 全局语言自动切换
-- 兼容任意安装路径（`third-party` 深层目录、自定义文件夹名）
-
-## 分支说明
-
-| 分支 | 说明 |
-|---|---|
-| `main` | 上游原版（JS），保持与 upstream 同步 |
-| `Dev-TS` | 本分支：TypeScript 重构，`dist/` 已提交，可直接安装 |
-
-## 构建（仅开发者需要）
-
-仓库中的 `dist/index.js` 已提交，普通用户把整个目录放入 `SillyTavern/data/.../third-party/`（或 ST 的 `public/scripts/extensions/third-party/`）即可使用，无需本地构建。
+## 安装与构建
 
 ```bash
 npm install        # 安装依赖
-npm run build      # 生产构建 (输出 dist/index.js + sourcemap)
-npm run watch      # 开发模式：监听 src/ 变更自动重建
-npm run typecheck  # 仅做类型检查 (tsc --noEmit)
+npm run build      # 生产构建，输出 dist/index.js + sourcemap
 ```
 
-## 源码结构
+插件本体位于 `public/scripts/extensions/preset-cards/`（manifest 的 `js` 字段指向 `dist/index.js`，`hooks.activate` = `init`）。将整个插件目录放入 ST 的 `public/scripts/extensions/` 下，刷新并启动 ST 后即可在侧边栏看到 **Preset Cards** 入口（或使用 `/presetcards` 斜杠命令）。
 
-```text
-preset-cards/
-├── manifest.json       # 扩展元数据（js 指向 dist/index.js，hooks.activate = init）
-├── package.json        # 构建脚本与依赖 (Vite + TypeScript)
-├── tsconfig.json       # TypeScript 编译配置
-├── vite.config.ts      # Vite 构建配置 (@sillytavern/* 外部化解析)
-├── src/                # TypeScript 源码
-│   ├── index.ts        # 入口，导出 init() 钩子
-│   ├── constants.ts    # 常量：扩展名/LOGO/本地化字典/模型与来源映射
-│   ├── i18n.ts         # 本地化助手 L()
-│   ├── cache.ts        # IndexedDB 背景图缓存
-│   ├── meta.ts         # 预设元数据读写 (readMeta/saveMeta)
-│   ├── presetList.ts   # 视图模型构建 (buildPresetList)
-│   ├── editModal.ts    # 元数据编辑弹窗 (openEditModal)
-│   ├── presetCards.ts  # 主弹窗逻辑 (openPresetCards)
-│   ├── init.ts         # 侧栏按钮与 /presetcards 斜杠命令
-│   ├── globals.d.ts    # 全局变量声明
-│   └── types/st.d.ts   # SillyTavern 模块自包含类型声明
-├── dist/               # 构建产物 (Vite 输出，提交进 git)
-├── style.css           # UI 视觉样式
-├── cards.html          # 预设卡片网格 Handlebars 模板
-├── edit.html           # 元数据/模型标签编辑弹窗模板
-├── Preset-cards.md     # 详细功能与实现文档
-└── llm-logos/          # 各主流模型厂商的 Logo 文件
-```
+## 使用说明
 
-## 使用
+1. **打开**：侧边栏点击 **Preset Cards**，或运行 `/presetcards`。
+2. **新建主 profile**：卡片「Configurations」区点击 `+`，输入名称，保存当前全部 prompt 开关为 Base。
+3. **新建派生 profile**：在某条 profile 上点击派生图标（fork），输入名称，得到一份相对上级的 Delta；此后可在其上编辑开关/值后再覆盖更新。
+4. **编辑值**：展开 profile 后点击条目上的编辑图标，修改 content / name / role / position 后保存；改动只记录净差异。
+5. **保存二选一**：编辑完点「保存修改」，选择「更新当前 profile」直接写回，或「新建为子配置」把当前状态保存为新的 Delta。
+6. **清除值变更**：有值差异的条目显示清除按钮，一键删掉该条目的 `fields` 还原为上级/默认。
+7. **重置**：点重置图标确认后，Delta 回退到父级、Base 回退到默认基准。
+8. **顺序调整**：仅活动预设可上下移条目，调整 `prompt_order` 的顺序（不改变开关与 `prompts[]` 顺序）。
 
-- 侧边栏点击 **Preset Cards**（或运行 `/presetcards`）打开卡片视图
-- 点卡片切换预设；悬停卡片显示导出 / 编辑 / 删除
-- 卡片内 **Configurations** 区管理子配置快照（新增 / 加载 / 覆盖 / 重命名 / 删除 / 导出 / 导入）
-- 工具栏支持搜索、简洁模式、多选批量删除、清理背景图缓存、导入预设
+## 数据说明
+
+- 所有扩展数据存于预设对象的 `extensions['preset_cards']`（描述、适用模型、背景图、profiles、隐藏默认基准），通过 ST 的 `/api/presets/save` 持久化。
+- **Base（`formatVersion: 2`, `kind: 'prompt_base'`）**：`prompts[]` 为 `{ identifier, enabled, fields? }`，保存全量开关快照，`fields` 只含值差异。
+- **Delta（`formatVersion: 2`, `kind: 'prompt_delta'`）**：`{ baseId, changes[] }`，`changes` 为 `{ identifier, enabled?, fields? }`，仅记录相对上级的差异，可嵌套。
+- 另有旧版 v1 全量快照（`settings` 深拷贝）用于向后兼容，不可派生。
+- 读取开关时以 `prompt_order` 的 global 条目（character_id=100001）为运行时真值，缺失时回退 `prompts[].enabled`，再缺失默认启用。
+
+## 开发
+
+| 命令 | 说明 |
+|---|---|
+| `npm run build` | 生产构建（Vite，输出到 `dist/`） |
+| `npm run watch` | 开发模式，监听 `src/` 变更自动重建 |
+| `npm run typecheck` | 仅做 TypeScript 类型检查（`tsc --noEmit`） |
+
+源码入口为 `src/index.ts`（导出 `init` 钩子），核心逻辑见 `src/presetCards.ts`、`src/presetList.ts`、`src/meta.ts` 与 `src/promptToggle.ts`。
