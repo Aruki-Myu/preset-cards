@@ -15,6 +15,7 @@ import {
     readMeta,
     saveMeta,
     type Preset,
+    type PresetMeta,
     type PresetProfile,
     type PromptBaseProfile,
     type PromptDeltaChange,
@@ -131,6 +132,114 @@ export async function openPresetCards(): Promise<void> {
         // resolveChoice 里 .click() 仍能正常触发关闭
         callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
         return promise;
+    }
+
+    // 导出方式选择弹窗：单一导出 / 关系链导出 / 整卡预设导出 / 取消
+    async function chooseProfileExportAction(): Promise<'profile' | 'tree' | 'preset' | null> {
+        const container = $('<div class="preset_cards_save_choice"></div>');
+        container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Export configuration')));
+        const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Export'))
+            .on('click', function () { resolveChoice('profile'); }));
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Export with branch chain'))
+            .on('click', function () { resolveChoice('tree'); }));
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Export current full preset'))
+            .on('click', function () { resolveChoice('preset'); }));
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Cancel'))
+            .on('click', function () { resolveChoice(null); }));
+        container.append(buttons);
+
+        let resolver: (v: 'profile' | 'tree' | 'preset' | null) => void;
+        const promise = new Promise<'profile' | 'tree' | 'preset' | null>(r => { resolver = r; });
+
+        function resolveChoice(v: 'profile' | 'tree' | 'preset' | null): void {
+            $(container).closest('.popup').find('.popup-controls .menu_button').click();
+            resolver(v);
+        }
+
+        callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
+        return promise;
+    }
+
+    // 单 profile 自包含导出（旧版格式）：base → prompt_base / delta → 附解析后父快照 / v1 → settings
+    function buildProfileExportData(profile: PresetProfile, meta: PresetMeta): string {
+        if (isPromptBaseProfile(profile)) {
+            return JSON.stringify({
+                kind: profile.kind,
+                formatVersion: profile.formatVersion,
+                prompts: profile.prompts,
+            }, null, 4);
+        }
+        if (isPromptDeltaProfile(profile)) {
+            // 导出自包含：附上解析后的完整 parent 状态快照，导入时可完整还原
+            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            return JSON.stringify({
+                kind: profile.kind,
+                formatVersion: profile.formatVersion,
+                baseId: profile.baseId,
+                base: {
+                    name: 'Imported Parent',
+                    prompts: parentStates,
+                },
+                changes: profile.changes,
+            }, null, 4);
+        }
+        return JSON.stringify(profile.settings, null, 4);
+    }
+
+    // 导出完整分支链 prompt_tree：从根 base 沿 baseId 一路收集到目标，保留原始 id/baseId 以便还原
+    function buildTreeExportData(profile: PromptBaseProfile | PromptDeltaProfile, meta: PresetMeta): string {
+        const chain: (PromptBaseProfile | PromptDeltaProfile)[] = [];
+        const seen = new Set<string>();
+        let current: PromptBaseProfile | PromptDeltaProfile | undefined = profile;
+        while (current && !seen.has(current.id)) {
+            seen.add(current.id);
+            chain.unshift(current);
+            if (isPromptBaseProfile(current)) break;
+            const parent = getProfile(meta, current.baseId);
+            current = parent && (isPromptBaseProfile(parent) || isPromptDeltaProfile(parent))
+                ? parent
+                : undefined;
+        }
+        const profiles = chain.map(p => isPromptBaseProfile(p)
+            ? { kind: p.kind, id: p.id, name: p.name, prompts: p.prompts }
+            : { kind: p.kind, id: p.id, name: p.name, baseId: p.baseId, changes: p.changes });
+        return JSON.stringify({ kind: 'prompt_tree', formatVersion: 2, profiles }, null, 4);
+    }
+
+    // 导出整个预设 JSON（与卡片级导出按钮共用）：剔除敏感字段与连接数据后落盘
+    function exportPresetFile(name: string, idx: number): void {
+        const preset = structuredClone(openai_settings[idx] as Preset);
+
+        const sensitiveFields = [
+            'reverse_proxy',
+            'proxy_password',
+            'custom_url',
+            'custom_include_body',
+            'custom_exclude_body',
+            'custom_include_headers',
+            'vertexai_region',
+            'vertexai_express_project_id',
+            'azure_base_url',
+            'azure_deployment_name',
+            'workers_ai_account_id',
+        ];
+
+        sensitiveFields.forEach(field => delete preset[field]);
+
+        if (settingsToUpdate) {
+            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
+                if (isConnection) {
+                    delete preset[settingName];
+                }
+            }
+        }
+
+        download(JSON.stringify(preset, null, 4), `${name}.json`, 'application/json');
     }
 
     // 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）
@@ -389,36 +498,7 @@ export async function openPresetCards(): Promise<void> {
         e.stopPropagation();
         const name = $(this).attr('data-preset-name') as string;
         const idx = $(this).data('preset-index') as number;
-        const preset = structuredClone(openai_settings[idx] as Preset);
-
-        // Remove sensitive fields
-        const sensitiveFields = [
-            'reverse_proxy',
-            'proxy_password',
-            'custom_url',
-            'custom_include_body',
-            'custom_exclude_body',
-            'custom_include_headers',
-            'vertexai_region',
-            'vertexai_express_project_id',
-            'azure_base_url',
-            'azure_deployment_name',
-            'workers_ai_account_id',
-        ];
-
-        sensitiveFields.forEach(field => delete preset[field]);
-
-        // Remove connection data
-        if (settingsToUpdate) {
-            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
-                if (isConnection) {
-                    delete preset[settingName];
-                }
-            }
-        }
-
-        const data = JSON.stringify(preset, null, 4);
-        download(data, `${name}.json`, 'application/json');
+        exportPresetFile(name, idx);
     });
 
     // ---- Delete button ----
@@ -1076,41 +1156,32 @@ export async function openPresetCards(): Promise<void> {
     });
 
     // ---- Profiles: Export Configuration ----
-    dialog.on('click', '.preset_card_profile_export', function (e) {
+    dialog.on('click', '.preset_card_profile_export', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
         const profileId = row.data('profile-id');
         const card = $(this).closest('.preset_card');
-        const preset = openai_settings[card.data('preset-index') as number] as Preset;
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+        const preset = openai_settings[idx] as Preset;
 
         const meta = readMeta(preset);
         const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        let data: string;
-        if (isPromptBaseProfile(profile)) {
-            data = JSON.stringify({
-                kind: profile.kind,
-                formatVersion: profile.formatVersion,
-                prompts: profile.prompts,
-            }, null, 4);
-        } else if (isPromptDeltaProfile(profile)) {
-            // 导出自包含：附上解析后的完整 parent 状态快照，导入时可完整还原
-            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-            data = JSON.stringify({
-                kind: profile.kind,
-                formatVersion: profile.formatVersion,
-                baseId: profile.baseId,
-                base: {
-                    name: 'Imported Parent',
-                    prompts: parentStates,
-                },
-                changes: profile.changes,
-            }, null, 4);
-        } else {
-            data = JSON.stringify(profile.settings, null, 4);
+        const choice = await chooseProfileExportAction();
+        if (choice === 'tree') {
+            // v1 快照无父链可导出，回退为单 profile 导出
+            if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
+                download(buildTreeExportData(profile, meta), `${profile.name}-tree.json`, 'application/json');
+            } else {
+                download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
+            }
+        } else if (choice === 'preset') {
+            exportPresetFile(name, idx);
+        } else if (choice === 'profile') {
+            download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
         }
-        download(data, `${profile.name}.json`, 'application/json');
     });
 
     // ---- Profiles: Import Configuration ----
@@ -1140,7 +1211,51 @@ export async function openPresetCards(): Promise<void> {
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
                 const newId = newProfileId();
 
-                if (parsed && parsed.kind === 'prompt_base' && Array.isArray(parsed.prompts)) {
+                if (parsed && parsed.kind === 'prompt_tree' && Array.isArray(parsed.profiles)) {
+                    // 完整分支链导入：oldId → 实际 id 映射，按 root→leaf 顺序重建
+                    const idMap = new Map<string, string>();
+                    let unresolved = false;
+                    for (const entry of parsed.profiles) {
+                        if (!entry) continue;
+                        if (entry.kind === 'prompt_base' && Array.isArray(entry.prompts)) {
+                            // 内容完全相同的现有 base 复用；否则新建并保留导出名称
+                            const existing = profiles.find((b): b is PromptBaseProfile =>
+                                isPromptBaseProfile(b) && b.name === (entry.name || profileName)
+                                && b.prompts.length === entry.prompts.length
+                                && b.prompts.every((e, i) => e.identifier === entry.prompts[i].identifier && e.enabled === entry.prompts[i].enabled));
+                            if (existing) {
+                                if (entry.id !== undefined) idMap.set(String(entry.id), existing.id);
+                            } else {
+                                const baseNewId = newProfileId();
+                                profiles.push({
+                                    formatVersion: 2,
+                                    kind: 'prompt_base',
+                                    id: baseNewId,
+                                    name: entry.name || profileName,
+                                    prompts: entry.prompts,
+                                });
+                                if (entry.id !== undefined) idMap.set(String(entry.id), baseNewId);
+                            }
+                        } else if (entry.kind === 'prompt_delta' && Array.isArray(entry.changes)) {
+                            // 目标 profile 用弹窗输入名，祖先 delta 保留导出名
+                            const isTarget = entry === parsed.profiles[parsed.profiles.length - 1];
+                            const rawBaseId = typeof entry.baseId === 'string' ? entry.baseId : '';
+                            const resolvedBaseId = rawBaseId ? idMap.get(rawBaseId) : undefined;
+                            if (rawBaseId && !resolvedBaseId) unresolved = true;
+                            profiles.push({
+                                formatVersion: 2,
+                                kind: 'prompt_delta',
+                                id: newProfileId(),
+                                name: isTarget ? profileName : (entry.name || profileName),
+                                baseId: resolvedBaseId || rawBaseId,
+                                changes: entry.changes,
+                            });
+                        }
+                    }
+                    if (unresolved) {
+                        toastr.warning(L('Base profile not found for this imported derived configuration'));
+                    }
+                } else if (parsed && parsed.kind === 'prompt_base' && Array.isArray(parsed.prompts)) {
                     profiles.push({
                         formatVersion: 2,
                         kind: 'prompt_base',
