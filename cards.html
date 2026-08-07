@@ -114,14 +114,14 @@
                                 {{#each this.entries}}
                                 <div class="preset_card_profile_entry {{#if this.hasFields}}has_fields{{/if}}" data-identifier="{{this.identifier}}">
                                     <span class="preset_card_profile_entry_name" title="{{this.identifier}}">{{this.name}}</span>
-                                    {{#if this.hasFields}}<span class="preset_card_profile_entry_modified" title="{{../../i18n.hasValueChanges}}"><i class="fa-solid fa-pen-to-square"></i></span>{{/if}}
+                                    {{#if this.hasFields}}<span class="preset_card_profile_entry_modified" title="{{../../../i18n.hasValueChanges}}"><i class="fa-solid fa-pen-to-square"></i></span>{{/if}}
                                     {{#if this.editable}}
-                                    <button class="preset_card_profile_entry_edit" title="{{../../i18n.editPrompt}}">
+                                    <button class="preset_card_profile_entry_edit" title="{{../../../i18n.editPrompt}}">
                                         <i class="fa-solid fa-pen"></i>
                                     </button>
                                     {{/if}}
                                     {{#if this.clearable}}
-                                    <button class="preset_card_profile_entry_clear" title="{{../../i18n.clearValueChange}}">
+                                    <button class="preset_card_profile_entry_clear" title="{{../../../i18n.clearValueChange}}">
                                         <i class="fa-solid fa-eraser"></i>
                                     </button>
                                     {{/if}}
@@ -133,7 +133,7 @@
                                         <i class="fa-solid fa-chevron-down"></i>
                                     </button>
                                     {{/if}}
-                                    <span class="preset_card_profile_entry_toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../../i18n.toggleEntry}}">
+                                    <span class="preset_card_profile_entry_toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../../../i18n.toggleEntry}}">
                                         {{#if this.enabled}}<i class="fa-solid fa-toggle-on"></i>{{else}}<i class="fa-solid fa-toggle-off"></i>{{/if}}
                                     </span>
                                 </div>
