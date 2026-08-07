@@ -15,7 +15,7 @@ import {
     type Preset,
     type PromptBaseProfile,
 } from './meta.js';
-import { applyBaseProfile, applyDeltaProfile, buildDeltaChanges, buildPromptToggleSnapshot, statesToChanges } from './promptToggle.js';
+import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildDeltaChanges, buildPromptToggleSnapshot, statesToChanges } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -571,7 +571,7 @@ export async function openPresetCards(): Promise<void> {
         row.toggleClass('expanded');
     });
 
-    // ---- Profiles: Toggle entry switch (display only, save applies) ----
+    // ---- Profiles: Toggle entry switch (updates the preset's actual value) ----
     dialog.on('click', '.preset_card_profile_entry_toggle', function (e) {
         e.stopPropagation();
         const toggle = $(this);
@@ -580,8 +580,24 @@ export async function openPresetCards(): Promise<void> {
         toggle.html(on
             ? '<i class="fa-solid fa-toggle-off"></i>'
             : '<i class="fa-solid fa-toggle-on"></i>');
-        // Mark the row as modified so the save button shows up
+
+        // Apply to the preset's real value (prompts + prompt_order) for robustness
         const row = toggle.closest('.preset_card_profile_row');
+        const entry = toggle.closest('.preset_card_profile_entry');
+        const card = row.closest('.preset_card');
+        const idx = card.data('preset-index') as number;
+        const identifier = String(entry.data('identifier'));
+        const preset = openai_settings[idx] as Preset;
+        if (!applyEntryState(preset, identifier, !on)) {
+            // Not found in the current preset; revert the visual toggle
+            toggle.toggleClass('on', on).toggleClass('off', !on);
+            toggle.html(on
+                ? '<i class="fa-solid fa-toggle-on"></i>'
+                : '<i class="fa-solid fa-toggle-off"></i>');
+            return;
+        }
+
+        // Mark the row as modified so the save button shows up
         row.addClass('modified');
         row.find('.preset_card_profile_save_btn').removeClass('hidden');
     });
@@ -600,13 +616,8 @@ export async function openPresetCards(): Promise<void> {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        // Collect current switch states from the expanded list
-        const states = row.find('.preset_card_profile_entry').map(function () {
-            return {
-                identifier: String($(this).data('identifier')),
-                enabled: $(this).find('.preset_card_profile_entry_toggle').hasClass('on'),
-            };
-        }).get();
+        // Collect current switch states from the preset's actual value
+        const states = buildPromptToggleSnapshot(preset);
 
         // Ask: update current profile or create a new subprofile (delta)?
         const choice = await chooseProfileSaveTarget();

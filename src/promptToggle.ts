@@ -1,6 +1,20 @@
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile } from './meta.js';
 
 /**
+ * 单条开关应用到预设实际值：改 prompts[].enabled 并同步 prompt_order。
+ * 返回是否匹配到该 identifier。
+ */
+export function applyEntryState(preset: Preset, identifier: string, enabled: boolean): boolean {
+    const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+    const prompt = prompts.find((p: any) => p && p.identifier === identifier);
+    if (!prompt) return false;
+
+    prompt.enabled = enabled;
+    syncPromptOrder(preset, [{ identifier, enabled }]);
+    return true;
+}
+
+/**
  * 采集预设全部 prompts 的开关清单（identifier + enabled）。
  * 只过滤掉无 identifier 的条目，纯操作 preset 对象，不碰 UI。
  */
