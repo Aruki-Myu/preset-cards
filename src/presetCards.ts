@@ -448,50 +448,8 @@ export async function openPresetCards(): Promise<void> {
         dialog.find('#preset_cards_multiselect_btn').trigger('click');
     });
 
-    // ---- Profiles: Add Configuration ----
+    // ---- Profiles: Add Configuration (Save Base Profile) ----
     dialog.on('click', '.preset_card_add_profile_btn', async function (e) {
-        e.stopPropagation();
-        const card = $(this).closest('.preset_card');
-        const name = card.attr('data-preset-name') as string;
-        const idx = card.data('preset-index') as number;
-
-        const profileName = await Popup.show.input(L('Configuration name:'), L('e.g., GPT-4 Optimization'));
-        if (!profileName) return;
-
-        let loadingToast: JQuery | null = null;
-        if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
-            $('#update_oai_preset').trigger('click');
-            await new Promise<void>(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
-        }
-
-        const preset = openai_settings[idx] as Preset;
-        const meta = readMeta(preset);
-        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
-
-        profiles.push({
-            id: Date.now().toString() + Math.floor(Math.random() * 1000),
-            name: profileName,
-            settings: snapshot
-        });
-
-        meta.profiles = profiles;
-        await saveMeta(name, idx, meta);
-        toastr.success(L('Configuration saved'));
-
-        // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
-    });
-
-    // ---- Profiles: Save Base Profile ----
-    dialog.on('click', '.preset_card_add_base_profile_btn', async function (e) {
         e.stopPropagation();
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name') as string;

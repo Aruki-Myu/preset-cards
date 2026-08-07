@@ -152,7 +152,7 @@ export const LOCAL_DICT: Record<string, string> = {
     'Clear Cache': '清理缓存',
     'Clear all cached background images?': '确定要清理所有已缓存的背景图片吗？',
     'Cache cleared successfully': '缓存清理成功',
-    'Save Base Profile': '保存主 profile',
+    'Save Base Profile': '保存当前 prompts 开关为主 profile',
     'Derive Profile': '派生',
     'Base': '主',
     'Delta': '派生',
