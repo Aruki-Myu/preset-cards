@@ -1,4 +1,4 @@
-# Profile 变更清单（Change List）设计
+# Profile 主/派生机制设计
 
 > 状态：设计稿，尚未实现
 > 分支：`feature/profile-changelist`
@@ -7,144 +7,130 @@
 
 当前 preset-cards 的 profile 是**全量快照**：保存时 `structuredClone(preset)` 存入 `profiles[]`，加载时 `Object.assign(preset, profile.settings)` 全量覆盖。
 
-问题：一个 Chat Completion 预设文件可达 1MB+，其中扩展（extensions）占 49%~73%、prompts 占 10%~27%、常规标量不到 1%。全量快照极浪费，且加载时会把未改动的字段也一并覆盖。
+问题：一个 Chat Completion 预设文件可达 1MB+，其中扩展（extensions）占 49%~73%、prompts 占 10%~27%、常规标量不到 1%。全量快照既浪费又臃肿，且加载时会把未改动字段一并覆盖。
 
-目标：把 profile 改为**变更清单**——只记录与基线有差异的设置项，每项含 id、开关、内容；加载时与目标预设合并。不同 profile 可有不同字段集合。
+目标：**主 profile 存全 prompts 开关清单（轻量）；派生 profile 只存相对主 profile 的差异（开关 + 值）**；加载时「主 + 子」叠加应用。不同 profile 字段集合可不同。
 
-## 2. 实测数据（三个真实预设）
+## 2. 实测数据（决定设计取向）
 
 文件位于 `SillyTavern-plugin/preset/`，基线参考 `SillyTavern-src/default/content/presets/openai/Default.json`。
 
-| 预设 | 文件大小 | 标量占比 | prompts | prompt_order | extensions |
+| 预设 | 文件大小 | A 标量 | B prompts | C order | A+B+C 合计 |
 |---|---|---|---|---|---|
-| 梦鲸思客V2-0602.json | 208,879 B | <1% | 28,238 B (14%) | 4,589 B (2%) | 126,293 B (60%) |
-| 【此间小镇HereBetween】1.6.json | 561,618 B | <1% | 57,441 B (10%) | 5,862 B (1%) | 411,133 B (73%) |
-| 8.3（2）【可待-从头越】 直出版.json | 1,098,470 B | <1% | 292,750 B (27%) | 11,703 B (1%) | 540,812 B (49%) |
+| 梦鲸思客V2-0602.json | 208,879 B | 1,387 B | 41,612 B | 4,589 B | 47,588 B (23%) |
+| 【此间小镇HereBetween】1.6.json | 561,618 B | 1,386 B | 74,654 B | 5,862 B | 81,902 B (15%) |
+| 8.3（2）【可待-从头越】 直出版.json | 1,098,470 B | 1,030 B | 436,191 B | 11,703 B | 448,924 B (41%) |
 
-结论：**体积大头在 prompts 和 extensions**。变更清单必须按条目级做 diff，只改一个 temperature 的 profile 应只有几百字节。
+结论：
+- A 标量 + C order 几乎免费（合计 3~13KB）。
+- **prompts 是成本决定项**：梦鲸 42KB / 小镇 75KB 尚可，但 **8.3 达 436KB**（单条 content 有 144KB）。对这类预设，全量 profile ≈ preset 文件翻倍。
+- **只存开关清单（identifier + enabled）永远便宜**：72~195 条约 3~9KB，与 prompts 内容体积无关。
+- extensions（regex_scripts / tavern_helper / SPreset）**明确排除，不纳入 profile**——它们占文件 49%~73% 且是第三方插件域。
 
 ## 3. Profile 存储边界（已与用户确认）
 
-**profile 只存 A + B + C，不含 extensions（D 类）。**
+- **主 profile**：记录当前预设**全部 prompts 的开关**，即 `{ identifier, enabled }[]`。不存值、不存扩展。
+- **派生 profile**：相对主 profile 的**差异**，差异包括「开关差异」与「值差异」（可改某 prompt 的 enabled，也可改其 content 等值）。
+- 加载派生 profile：**先应用主 profile 的全部开关，再叠加派生差异**（主 + 子叠加）。
+- extensions 永不纳入。
 
-三个预设**共有**的顶层键（39 个，不含 extensions）作为 profile 可覆盖的字段范围；其中 **15 个值有差异**（temperature、top_p、top_k、frequency_penalty、presence_penalty、reasoning_effort、squash_system_messages、continue_prefill、openai_max_tokens 等）。扩展（regex_scripts / tavern_helper / SPreset）不纳入 profile——它们是第三方插件的域，排除后 profile 保持轻量且聚焦预设核心配置。
+## 4. 关键事实：开关真正生效在 prompt_order
 
-### 类别划分
+ST 中 `prompts[].enabled` **不驱动 UI/运行时**：
+- Prompt Manager 的 toggle 改的是 `prompt_order` 条目的 `enabled`（PromptManager.js:443-452）；
+- 列表渲染与生成过滤读的也是 `prompt_order`（:1196-1199、:1664-1668）；
+- `prompts[].enabled` 只是随文件保存的"默认值"。
 
-- **A 常规标量**：采样参数、上下文限制、生成开关、提示词模板文本、格式字符串。约 39 键（并集），15 键实际有差异。
-- **B prompts**：72~195 条自定义 prompt，每条含 identifier/name/enabled/content/role/injection_* 等。
-- **C prompt_order**：执行顺序数组（每条 identifier + enabled）。
-- **D extensions**：regex_scripts、SPreset、tavern_helper —— **明确排除，不存**。
+因此：**要让开关生效，必须同时同步 `prompt_order`**（global 策略下即 `character_id === 100001` 那条的 `order[].enabled`）。
 
-## 4. 条目结构（四类判别联合）
+## 5. 数据结构（与 v1 全量快照并存）
 
 ```ts
-type ChangeEntry =
-    | ScalarEntry
-    | PromptEntry
-    | PromptOrderEntry;
-// 无 ExtensionEntry：extensions 不纳入 profile（见 §3）
-
-interface ScalarEntry {
-    kind: 'scalar';
-    id: string;                       // 预设标量键，如 'temperature'
-    value: string | number | boolean; // 新值
-    previous?: string | number | boolean; // 基线旧值（UI 展示/撤销用，可选）
-}
-
-interface PromptEntry {
-    kind: 'prompt';
-    op: 'set' | 'add' | 'delete';
-    id: string;                       // prompt.identifier
-    enabled?: boolean;                // 开关
-    fields?: Partial<PromptFields>;   // 被改动的字段子集；add 建议全量
-    order?: number;                   // 在 prompts[] 中的下标（仅重排时）
-}
-
-interface PromptFields {
+// meta.ts
+export interface PresetProfileV1 {              // 现有，不动
+    id: string;
     name: string;
-    content: string;
-    role: string;
-    system_prompt: boolean;
-    marker: boolean;
-    forbid_overrides: boolean;
-    injection_position: number;       // 0 相对 / 1 绝对
-    injection_depth: number;
-    injection_order: number;
-    injection_trigger: string[];
-    attach_index: number;
-    attach_role: string;
-    attach_side: string;
-    extension: boolean;
+    settings: Record<string, any>;
+    formatVersion?: 1;
 }
 
-interface PromptOrderEntry {
-    kind: 'prompt_order';
-    op: 'set' | 'reorder';
-    characterId: number;              // 默认 100001
-    id?: string;                      // set 时：order 内 identifier
-    enabled?: boolean;                // set 时：开关
-    position?: number;                // set 时：在 order[] 中的新位置
-    entries?: { id: string; enabled: boolean }[]; // reorder 时：完整新序列
+export interface PromptBaseProfile {            // 主 profile
+    formatVersion: 2;
+    kind: 'prompt_base';
+    id: string;
+    name: string;
+    prompts: { identifier: string; enabled: boolean }[];
+}
+
+export interface PromptDeltaProfile {           // 派生 profile
+    formatVersion: 2;
+    kind: 'prompt_delta';
+    id: string;
+    name: string;
+    baseId: string;                             // 依赖的主 profile id
+    changes: PromptDeltaChange[];
+}
+
+export type PresetProfile = PresetProfileV1 | PromptBaseProfile | PromptDeltaProfile;
+
+export interface PromptDeltaChange {
+    identifier: string;
+    enabled?: boolean;                          // 开关差异
+    fields?: Partial<PromptFields>;             // 值差异（content/role 等）
 }
 ```
 
-## 5. Diff 策略
+判别：`settings` 存在 → v1；`kind === 'prompt_base'` → 主；`kind === 'prompt_delta'` → 派生。三者可混存于 `profiles[]`。
 
-### 5.1 基线选择
+## 6. 保存流程
 
-**以父预设自身的已保存态为基线**（生成 profile 时的 `openai_settings[idx]`，先触发 `#update_oai_preset` 同步视为已保存态）。
+1. 活动预设先 `#update_oai_preset` + 延时（参考 presetCards.ts:433-438，确保 `openai_settings[idx]` 是已保存态）。
+2. **存主 profile**：`buildPromptToggleSnapshot(openai_settings[idx])` → `{ identifier, enabled }[]` 全量。
+3. **派生**：从某主 profile 复制其 `prompts` 作为初始 → 生成新 `prompt_delta`，`changes` 初始为空（或基于当前状态与主 profile 的差异生成）。
 
-理由：
-- UUID prompt 条目（60~178 条/预设）和所有扩展在 ST 默认预设中不存在，若以 ST 默认为基线，它们全部算"有修改"→ 必须全量存储 → 体积目标落空。
-- profile 语义就是"这个预设的变体"：父预设自身是最准确、最小的 diff 参照。
-- ST 默认值的角色降级为：① 定义"哪些键是可设置项"（settingsToUpdate / default_settings 键集）；② 可选提供"重置回默认"操作。
+## 7. 加载/应用流程
 
-### 5.2 比较规则
+对现有「加载」处理器（presetCards.ts:464-492）按类型分支：
 
-- 数值按数值比较（`1` ≡ `1.0`，解决类型漂移）；
-- 字符串按全等（content 等不得 trim）；
-- 数组按序列全等（placement、injection_trigger、order 序列）；
-- 双方都缺失的字段视为相等；`undefined` ≡ 缺失；
-- 连接凭据键永远排除（复用 constants.ts 的排除清单）。
+- **v1**：维持 `Object.assign(preset, profile.settings)`（现有行为，零迁移）。
+- **主 profile**：按 identifier 回写 `prompts[].enabled`，同步 `prompt_order`。
+- **派生 profile**：
+  1. 找到 `baseId` 指向的主 profile，应用其全部开关；
+  2. 叠加 `changes`（enabled 覆盖 + fields 合并）；
+  3. 同步 `prompt_order`。
 
-### 5.3 各类 diff
+应用后：
+- `saveMeta` 持久化（meta.ts:61-71 会连带写盘整个 preset body）；
+- 若为活动预设，`$('#settings_preset_openai').trigger('change')` 让 ST 原生重载，并调用 `promptManager.render(false)` 刷新 Prompt Manager 列表（openai.js 已导出 `promptManager`）；
+- 缺失 identifier（prompt 已被删）→ 跳过 + 汇总 toast。
 
-- **标量**：对并集键逐个比较，不同则产出 `ScalarEntry`。
-- **prompts**：按 identifier 建 map。双侧都有 → `set`（只存差异字段子集，仅改开关则只带 enabled）；仅当前 → `add`（全量）；仅基线 → `delete`。
-- **prompt_order**：按 characterId 分组。顺序序列变了 → `reorder`（完整新序列）；仅 enabled/位置变 → 逐条 `set`。
+## 8. UI 设计
 
-### 5.4 无法可靠 diff 的项
+- `cards.html`：
+  - profile 区新增「保存主 profile」按钮；
+  - 主 profile 行提供「派生」入口；
+  - 三种 profile 行类型指示（图标/前缀：[Base] / [Delta] / 无）。
+- `presetCards.ts`：保存 / 派生 / 加载 / 更新 / 导出 / 导入 / 简洁模式长按加载按类型分支。
+- `presetList.ts`：`PresetCardModel.profiles` 类型改为 `PresetProfile[]`，模板上下文补类型指示。
+- `style.css`：类型徽标样式（可复用 chip 样式）。
 
-- 用户自定义 UUID prompt / 第三方条目：不是"无法 diff"，而是"基线里没有"——用父预设基线后天然是"双侧都有"或"仅基线"，diff 可靠；只有新增条目走 `add`（需存全量，不可避免的最小值）。
-- 含可变内容的字段（如 sourcemap URL）：以精确串全等为准，不做语义级 diff。
+## 9. 边界情况
 
-## 6. 加载合并语义
+| 场景 | 处理 |
+|---|---|
+| `preset.prompts` 缺失/非数组 | 存空清单并提示；加载空操作 |
+| identifier 在当前预设不存在 | 跳过 + 汇总 toast |
+| 主 profile 被删，派生还引用它 | 加载时若 base 缺失 → 降级只应用 changes；UI 提示 |
+| 派生「更新」 | 重新与 base 比较生成 changes（覆盖旧 changes） |
+| 派生「覆盖为当前设置」 | 重新生成 changes 或转存为独立主 profile（待定） |
+| 导出/导入 | 主导 `{kind,prompts}`，派生导 `{kind,baseId,changes}`；导入按 kind 识别 |
+| 加载到已锁定活动预设 | 若后续做锁定：锁快照回写会覆盖 profile 应用结果（toast 提示） |
 
-以目标预设对象为起点，按顺序应用 changes：
+## 10. 待实现项
 
-| 条目 | 覆盖 | 删除 | 追加 | 重排 |
-|---|---|---|---|---|
-| scalar | `preset[id] = value` | — | — | — |
-| prompt | `set`：按 id 合并 fields+enabled+order | `delete`：从 prompts 过滤 + 从 prompt_order 移除 | `add`：push 完整 prompt | order 移动下标 |
-| prompt_order | `set`：设 enabled/position；缺失则 push | 由 reorder 序列隐式删除 | reorder 中新增追加 | reorder：整体替换 order 序列 |
-
-关键不变式：
-1. `preset.extensions['preset-cards']` 永不参与 diff、永不被覆盖（避免递归自引用）。
-2. 应用不"重置"基线里没提到的字段——这正是变更清单的语义。
-3. 应用后沿用现有 `saveMeta` 持久化；若为当前激活预设触发 `#settings_preset_openai` change。
-4. 缺失字段应用策略：`set` 只写 fields 里显式给的字段，不补基线不存在的字段。
-
-## 7. 兼容性与迁移
-
-- **检测**：`profile.formatVersion === 2 && Array.isArray(profile.changes)` → v2；`profile.settings` 存在 → v1 快照。
-- **共存**：`profiles[]` 允许混存 v1/v2。加载分支：v1 保持现有 `Object.assign` 行为；v2 走 §6 应用器。
-- **迁移**：v1 profile 被"更新/覆盖"时原地转换为 v2（baseline=当前已保存态，changes=diff(快照, baseline)）。v1→v2 应用结果等价，属无损转换。
-
-## 8. 待实现项（Not Implemented）
-
-- [ ] `diff(baseline, current)` 纯函数
-- [ ] `applyChanges(preset, changes)` 应用器
-- [ ] 保存 profile 时的字段勾选 UI（可复用 constants.ts 的 PROFILE_FIELD_GROUPS）
-- [ ] v1/v2 检测与迁移
-- [ ] 陈旧基线指纹检测（可选：WebCrypto 哈希，加载时提示预设已被修改）
+- [ ] `buildPromptToggleSnapshot(preset)` 主 profile 采集
+- [ ] `applyBaseProfile(preset, profile)` + `applyDeltaProfile(preset, delta, base)`（含 prompt_order 同步）
+- [ ] 保存 / 派生 / 加载 / 更新 / 导出 / 导入各 handler 分支
+- [ ] UI：按钮、行类型指示、样式
+- [ ] 简洁模式长按加载分支
+- [ ] 派生 profile 的「值差异」编辑 UI（务实方案：优先复用 ST 原生 Prompt Manager 编辑 content，派生只记录差异；或提供简单编辑入口，见 §8 取舍）
