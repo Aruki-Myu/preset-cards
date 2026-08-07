@@ -4,3 +4,4 @@ node_modules/
 Thumbs.db
 dist/*.map
 docs/
+dist/*.map
