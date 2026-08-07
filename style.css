@@ -1046,6 +1046,18 @@
     min-height: 120px;
 }
 
+/* 位置 / 角色 同排双列，窄屏自动换行 */
+.preset_cards_prompt_edit_row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+}
+
+.preset_cards_prompt_edit_row .preset_edit_field {
+    flex: 1 1 calc(50% - 6px);
+    min-width: 110px;
+}
+
 .preset_card_profile_entry_empty {
     font-size: 11px;
     color: rgba(128, 128, 128, 0.8);

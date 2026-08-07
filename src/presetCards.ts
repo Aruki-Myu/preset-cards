@@ -143,6 +143,14 @@ export async function openPresetCards(): Promise<void> {
                 .text(L('This is a marker prompt. Its content is managed by SillyTavern and cannot be edited here.')));
         }
 
+        const nameWrap = $('<div class="preset_edit_field"></div>');
+        nameWrap.append($('<label></label>').text(L('Name')));
+        const nameInput = $('<input type="text">').val(prompt.name ?? '');
+        nameWrap.append(nameInput);
+
+        // 位置与角色：两个窄控件并排一行，窄屏自动换行
+        const rowWrap = $('<div class="preset_cards_prompt_edit_row"></div>');
+
         const roleWrap = $('<div class="preset_edit_field"></div>');
         roleWrap.append($('<label></label>').text(L('Role')));
         const roleSelect = $('<select class="text_pole"></select>');
@@ -152,13 +160,20 @@ export async function openPresetCards(): Promise<void> {
             roleSelect.append(option);
         }
         roleWrap.append(roleSelect);
-        container.append(roleWrap);
 
-        const nameWrap = $('<div class="preset_edit_field"></div>');
-        nameWrap.append($('<label></label>').text(L('Name')));
-        const nameInput = $('<input type="text">').val(prompt.name ?? '');
-        nameWrap.append(nameInput);
-        container.append(nameWrap);
+        const positionWrap = $('<div class="preset_edit_field"></div>');
+        positionWrap.append($('<label></label>').text(L('Position')));
+        const positionSelect = $('<select class="text_pole"></select>');
+        // 与 ST INJECTION_POSITION 一致（PromptManager.js:37-40）：0=Relative, 1=In-chat
+        for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
+            const option = $('<option></option>').attr('value', value).text(label);
+            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
+            positionSelect.append(option);
+        }
+        positionWrap.append(positionSelect);
+
+        rowWrap.append(roleWrap);
+        rowWrap.append(positionWrap);
 
         const contentWrap = $('<div class="preset_edit_field"></div>');
         contentWrap.append($('<label></label>').text(L('Content')));
@@ -167,18 +182,10 @@ export async function openPresetCards(): Promise<void> {
             contentInput.prop('disabled', true);
         }
         contentWrap.append(contentInput);
-        container.append(contentWrap);
 
-        const positionWrap = $('<div class="preset_edit_field"></div>');
-        positionWrap.append($('<label></label>').text(L('Position')));
-        const positionSelect = $('<select class="text_pole"></select>');
-        for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
-            const option = $('<option></option>').attr('value', value).text(label);
-            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
-            positionSelect.append(option);
-        }
-        positionWrap.append(positionSelect);
-        container.append(positionWrap);
+        container.append(nameWrap);
+        container.append(rowWrap);
+        container.append(contentWrap);
 
         const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
             okButton: t`Save`,
