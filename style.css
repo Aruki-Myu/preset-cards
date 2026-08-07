@@ -762,6 +762,121 @@
     color: var(--SmartThemeQuoteColor);
 }
 
+.preset_card_profile_entries {
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.12);
+    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
+    max-height: 180px;
+    overflow-y: auto;
+    width: 100%;
+}
+
+.preset_card_profile_row.expanded {
+    flex-wrap: wrap;
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.06);
+    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25);
+}
+
+.preset_card_profile_row.expanded .preset_card_profile_entries {
+    display: flex;
+}
+
+.preset_card_profile_entry {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 4px;
+    border-radius: 4px;
+    font-size: 11px;
+}
+
+.preset_card_profile_entry:hover {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.08);
+}
+
+.preset_card_profile_entry_name {
+    flex: 1;
+    min-width: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--SmartThemeQuoteColor, inherit);
+}
+
+.preset_card_profile_entry_modified {
+    color: #e6a23c;
+    font-size: 10px;
+    flex-shrink: 0;
+}
+
+.preset_card_profile_entry_toggle {
+    flex-shrink: 0;
+    font-size: 13px;
+    cursor: pointer;
+}
+
+.preset_card_profile_entry_toggle.on {
+    color: var(--SmartThemeQuoteColor);
+}
+
+.preset_card_profile_entry_toggle.off {
+    color: rgba(128, 128, 128, 0.7);
+}
+
+.preset_card_profile_save_btn {
+    margin-top: 6px;
+    align-self: flex-end;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    padding: 4px 10px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.preset_card_profile_save_btn.hidden {
+    display: none;
+}
+
+.preset_card_profile_save_btn:hover {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
+}
+
+.preset_card_profile_row.modified {
+    border-color: #e6a23c;
+}
+
+.preset_card_save_choice {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding: 4px;
+}
+
+.preset_card_save_choice_title {
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.preset_card_save_choice_actions {
+    display: flex;
+    gap: 8px;
+    justify-content: center;
+}
+
+.preset_card_profile_entry_empty {
+    font-size: 11px;
+    color: rgba(128, 128, 128, 0.8);
+    text-align: center;
+    padding: 4px 0;
+}
+
 .preset_card_profile_actions {
     display: flex;
     gap: 8px;

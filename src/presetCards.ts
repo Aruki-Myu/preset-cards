@@ -15,7 +15,7 @@ import {
     type Preset,
     type PromptBaseProfile,
 } from './meta.js';
-import { applyBaseProfile, applyDeltaProfile, buildDeltaChanges, buildPromptToggleSnapshot } from './promptToggle.js';
+import { applyBaseProfile, applyDeltaProfile, buildDeltaChanges, buildPromptToggleSnapshot, statesToChanges } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -48,6 +48,31 @@ export async function openPresetCards(): Promise<void> {
             $('#settings_preset_openai').trigger('change');
             promptManager?.render?.(false);
         }
+    }
+
+    // Two-button choice popup: update current profile, or create a new subprofile (delta).
+    async function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
+        const container = $('<div class="preset_cards_save_choice"></div>');
+        container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Save modified switches to')));
+        const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Update current profile'))
+            .on('click', function () { resolveChoice('update'); }));
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Create new subprofile'))
+            .on('click', function () { resolveChoice('create'); }));
+        container.append(buttons);
+
+        let resolver: (v: 'update' | 'create' | null) => void;
+        const promise = new Promise<'update' | 'create' | null>(r => { resolver = r; });
+
+        function resolveChoice(v: 'update' | 'create' | null): void {
+            $(container).closest('.popup').find('.popup-controls .menu_button').click();
+            resolver(v);
+        }
+
+        callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: '', cancelButton: '' });
+        return promise;
     }
 
     // ---- Search ----
@@ -488,7 +513,7 @@ export async function openPresetCards(): Promise<void> {
         dialog.find('#preset_cards_search').trigger('input');
     });
 
-    // ---- Profiles: Load Configuration ----
+    // ---- Profiles: Load Configuration (click = apply + expand) ----
     dialog.on('click', '.preset_card_profile_name', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
@@ -541,6 +566,103 @@ export async function openPresetCards(): Promise<void> {
                 $('#settings_preset_openai').trigger('change');
             }
         }
+
+        // Toggle expanded entry list (click again to collapse)
+        row.toggleClass('expanded');
+    });
+
+    // ---- Profiles: Toggle entry switch (display only, save applies) ----
+    dialog.on('click', '.preset_card_profile_entry_toggle', function (e) {
+        e.stopPropagation();
+        const toggle = $(this);
+        const on = toggle.hasClass('on');
+        toggle.toggleClass('on', !on).toggleClass('off', on);
+        toggle.html(on
+            ? '<i class="fa-solid fa-toggle-off"></i>'
+            : '<i class="fa-solid fa-toggle-on"></i>');
+        // Mark the row as modified so the save button shows up
+        const row = toggle.closest('.preset_card_profile_row');
+        row.addClass('modified');
+        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+    });
+
+    // ---- Profiles: Save expanded edits ----
+    dialog.on('click', '.preset_card_profile_save_btn', async function (e) {
+        e.stopPropagation();
+        const row = $(this).closest('.preset_card_profile_row');
+        const profileId = row.data('profile-id');
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const profile = meta.profiles.find(p => p.id === String(profileId));
+        if (!profile) return;
+
+        // Collect current switch states from the expanded list
+        const states = row.find('.preset_card_profile_entry').map(function () {
+            return {
+                identifier: String($(this).data('identifier')),
+                enabled: $(this).find('.preset_card_profile_entry_toggle').hasClass('on'),
+            };
+        }).get();
+
+        // Ask: update current profile or create a new subprofile (delta)?
+        const choice = await chooseProfileSaveTarget();
+        if (!choice) return;
+
+        if (choice === 'update') {
+            if (isPromptBaseProfile(profile)) {
+                profile.prompts = states;
+            } else if (isPromptDeltaProfile(profile)) {
+                const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                    isPromptBaseProfile(b) && b.id === profile.baseId);
+                if (base) {
+                    profile.changes = statesToChanges(states, base, profile.changes);
+                } else {
+                    profile.changes = states.map(s => ({ identifier: s.identifier, enabled: s.enabled }));
+                }
+            } else {
+                // v1: not editable via switches
+                toastr.warning(L('This profile type cannot be edited with switches'));
+                return;
+            }
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration updated'));
+        } else {
+            // create a new delta subprofile
+            const base = isPromptBaseProfile(profile)
+                ? profile
+                : (isPromptDeltaProfile(profile)
+                    ? meta.profiles.find((b): b is PromptBaseProfile => isPromptBaseProfile(b) && b.id === profile.baseId)
+                    : undefined);
+            if (!base) {
+                toastr.warning(L('Base profile not found, cannot create derived configuration'));
+                return;
+            }
+            const deltaName = await Popup.show.input(L('Derived profile name:'), '');
+            if (!deltaName) return;
+
+            const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+            const changes = statesToChanges(states, base, isPromptDeltaProfile(profile) ? profile.changes : []);
+            profiles.push({
+                formatVersion: 2,
+                kind: 'prompt_delta',
+                id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                name: deltaName,
+                baseId: base.id,
+                changes,
+            });
+            meta.profiles = profiles;
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Derived profile created'));
+        }
+
+        // Refresh UI
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        dialog.find('#preset_cards_search').trigger('input');
     });
 
     // ---- Profiles: Update Configuration ----

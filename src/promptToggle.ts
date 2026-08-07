@@ -103,11 +103,34 @@ export function syncPromptOrder(
 }
 
 /**
- * 重新基于主 profile 生成派生差异：对 base 条目逐 identifier 与当前预设比较。
- * - enabled 不同 → 记录 enabled；
- * - 对 base 条目上存在的值字段做浅层比较，不同 → 记录 fields。
- * 只记有差异的条目，覆盖旧 changes。
+ * 从完整开关状态列表生成派生差异：与主 profile 的 prompts 逐条对比 enabled。
+ * 保留传入的已有差异（fields），仅更新 enabled 不同的条目。
  */
+export function statesToChanges(
+    states: { identifier: string; enabled: boolean }[],
+    base: PromptBaseProfile,
+    previousChanges: PromptDeltaChange[] = [],
+): PromptDeltaChange[] {
+    const baseEnabled = new Map(base.prompts.map((p) => [p.identifier, p.enabled]));
+    const previousFields = new Map(
+        previousChanges.filter((c) => c.fields).map((c) => [c.identifier, c.fields]),
+    );
+
+    const changes: PromptDeltaChange[] = [];
+    for (const state of states) {
+        const baseValue = baseEnabled.get(state.identifier);
+        const enabledDiff = baseValue !== undefined && baseValue !== state.enabled;
+        const fields = previousFields.get(state.identifier);
+        if (enabledDiff || fields) {
+            const change: PromptDeltaChange = { identifier: state.identifier };
+            if (enabledDiff) change.enabled = state.enabled;
+            if (fields) change.fields = fields;
+            changes.push(change);
+        }
+    }
+
+    return changes;
+}
 export function buildDeltaChanges(preset: Preset, base: PromptBaseProfile): PromptDeltaChange[] {
     const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
     const byIdentifier = new Map<string, any>(

@@ -8,6 +8,14 @@ export interface ModelChip {
     logo: string;
 }
 
+/** profile 展开后展示的一个条目（prompt 名 + 开关状态）。 */
+export interface ProfileEntryView {
+    identifier: string;
+    name: string;
+    enabled: boolean;
+    hasFields?: boolean;
+}
+
 /** 单张卡片的视图模型,喂给 cards.html 模板。 */
 export interface PresetCardModel {
     name: string;
@@ -59,14 +67,39 @@ export function buildPresetList(): PresetCardModel[] {
         const meta = readMeta(preset);
 
         // Decorate each profile row with a type indicator so cards.html can render
-        // [Base] / [Delta] badges and the derive button.
-        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean };
+        // [Base] / [Delta] badges, the derive button, and expandable entry list.
+        const promptNames = new Map<string, string>();
+        if (Array.isArray(preset.prompts)) {
+            for (const p of preset.prompts) {
+                if (p && typeof p.identifier === 'string' && p.identifier && typeof p.name === 'string') {
+                    promptNames.set(p.identifier, p.name);
+                }
+            }
+        }
+
+        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; entries: ProfileEntryView[] };
         const profiles: PresetProfile[] = (Array.isArray(meta.profiles) ? meta.profiles : []).map((p) => {
+            let entries: ProfileEntryView[] = [];
+            if (isPromptBaseProfile(p)) {
+                entries = p.prompts.map((e) => ({
+                    identifier: e.identifier,
+                    name: promptNames.get(e.identifier) || e.identifier,
+                    enabled: e.enabled,
+                }));
+            } else if (isPromptDeltaProfile(p)) {
+                entries = p.changes.map((c) => ({
+                    identifier: c.identifier,
+                    name: promptNames.get(c.identifier) || c.identifier,
+                    enabled: c.enabled !== undefined ? c.enabled : true,
+                    hasFields: !!c.fields && Object.keys(c.fields).length > 0,
+                }));
+            }
             const row: ProfileRow = {
                 ...p,
                 isBase: isPromptBaseProfile(p),
                 isDelta: isPromptDeltaProfile(p),
                 isV1: !isPromptBaseProfile(p) && !isPromptDeltaProfile(p),
+                entries,
             };
             return row;
         });
@@ -126,6 +159,10 @@ export function getCardsTemplateContext() {
             derive: L('Derive Profile'),
             base: L('Base'),
             delta: L('Delta'),
+            hasValueChanges: L('Has value changes'),
+            noEntries: L('No entries'),
+            toggleEntry: L('Toggle entry'),
+            saveChanges: L('Save changes'),
         }
     };
 }
