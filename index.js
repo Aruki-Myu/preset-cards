@@ -1246,3 +1246,7 @@ export function init() {
         helpString: 'Opens the preset cards view for Chat Completion presets.',
     }));
 }
+
+export function refresh() {
+    location.reload();
+}

@@ -9,6 +9,8 @@
     "version": "1.0.0",
     "homePage": "https://github.com/SillyTavern/SillyTavern",
     "hooks": {
-        "activate": "init"
+        "activate": "init",
+        "install": "refresh",
+        "update": "refresh"
     }
 }
