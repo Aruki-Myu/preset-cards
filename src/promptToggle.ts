@@ -1,3 +1,4 @@
+import { isPromptBaseProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile } from './meta.js';
 
 /**
@@ -46,6 +47,38 @@ export function applyBaseProfile(preset: Preset, profile: PromptBaseProfile): vo
     if (orderEntries.length > 0) {
         syncPromptOrder(preset, orderEntries);
     }
+}
+
+/**
+ * 递归解析一个 profile 的完整开关状态：
+ * - base：直接返回 prompts；
+ * - delta：先解析 parent（base 或上层 delta），再叠加 changes（enabled 覆盖）。
+ */
+export function resolveProfileStates(
+    profile: PromptBaseProfile | PromptDeltaProfile,
+    allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
+    seen: Set<string> = new Set(),
+): { identifier: string; enabled: boolean }[] {
+    if (seen.has(profile.id)) return []; // 防环
+    seen.add(profile.id);
+
+    if (isPromptBaseProfile(profile)) {
+        return structuredClone(profile.prompts);
+    }
+
+    const parent = allProfiles.find((p) => p.id === profile.baseId);
+    const states = parent
+        ? resolveProfileStates(parent, allProfiles, seen)
+        : [];
+
+    const map = new Map(states.map((s) => [s.identifier, s.enabled]));
+    for (const change of profile.changes) {
+        if (change.enabled !== undefined) {
+            map.set(change.identifier, change.enabled);
+        }
+    }
+
+    return [...map.entries()].map(([identifier, enabled]) => ({ identifier, enabled }));
 }
 
 /**
@@ -117,15 +150,16 @@ export function syncPromptOrder(
 }
 
 /**
- * 从完整开关状态列表生成派生差异：与主 profile 的 prompts 逐条对比 enabled。
+ * 从完整开关状态列表生成派生差异：与 parent 的开关状态逐条对比 enabled。
+ * parent 可为 base 或上层 delta（用其解析后的完整状态）。
  * 保留传入的已有差异（fields），仅更新 enabled 不同的条目。
  */
 export function statesToChanges(
     states: { identifier: string; enabled: boolean }[],
-    base: PromptBaseProfile,
+    parentStates: { identifier: string; enabled: boolean }[],
     previousChanges: PromptDeltaChange[] = [],
 ): PromptDeltaChange[] {
-    const baseEnabled = new Map(base.prompts.map((p) => [p.identifier, p.enabled]));
+    const baseEnabled = new Map(parentStates.map((p) => [p.identifier, p.enabled]));
     const previousFields = new Map(
         previousChanges.filter((c) => c.fields).map((c) => [c.identifier, c.fields]),
     );
@@ -139,43 +173,6 @@ export function statesToChanges(
             const change: PromptDeltaChange = { identifier: state.identifier };
             if (enabledDiff) change.enabled = state.enabled;
             if (fields) change.fields = fields;
-            changes.push(change);
-        }
-    }
-
-    return changes;
-}
-export function buildDeltaChanges(preset: Preset, base: PromptBaseProfile): PromptDeltaChange[] {
-    const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
-    const byIdentifier = new Map<string, any>(
-        prompts.filter((p: any) => p && typeof p.identifier === 'string' && p.identifier).map((p: any) => [p.identifier, p]),
-    );
-
-    const changes: PromptDeltaChange[] = [];
-
-    for (const rawEntry of base.prompts) {
-        const baseEntry = rawEntry as Record<string, any>;
-        const prompt = byIdentifier.get(baseEntry.identifier);
-        if (!prompt) continue;
-
-        const change: PromptDeltaChange = { identifier: baseEntry.identifier };
-
-        if (prompt.enabled !== baseEntry.enabled) {
-            change.enabled = !!prompt.enabled;
-        }
-
-        const fields: Record<string, any> = {};
-        for (const key of Object.keys(baseEntry)) {
-            if (key === 'identifier' || key === 'enabled') continue;
-            if (!Object.is(baseEntry[key], prompt[key])) {
-                fields[key] = prompt[key];
-            }
-        }
-        if (Object.keys(fields).length > 0) {
-            change.fields = fields;
-        }
-
-        if (change.enabled !== undefined || change.fields) {
             changes.push(change);
         }
     }

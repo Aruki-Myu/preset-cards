@@ -14,8 +14,9 @@ import {
     saveMeta,
     type Preset,
     type PromptBaseProfile,
+    type PromptDeltaProfile,
 } from './meta.js';
-import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildDeltaChanges, buildPromptToggleSnapshot, statesToChanges } from './promptToggle.js';
+import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildPromptToggleSnapshot, resolveProfileStates, statesToChanges } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -141,12 +142,19 @@ export async function openPresetCards(): Promise<void> {
                 if (isPromptBaseProfile(profile)) {
                     applyBaseProfile(preset, profile);
                 } else if (isPromptDeltaProfile(profile)) {
-                    const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                        isPromptBaseProfile(b) && b.id === profile.baseId);
-                    if (!base) {
+                    const states = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+                    if (states.length === 0) {
                         toastr.warning(L('Base profile not found, applying changes only'));
+                    } else {
+                        applyBaseProfile(preset, {
+                            formatVersion: 2,
+                            kind: 'prompt_base',
+                            id: profile.baseId || 'parent',
+                            name: 'Parent',
+                            prompts: states,
+                        });
                     }
-                    applyDeltaProfile(preset, profile, base);
+                    applyDeltaProfile(preset, profile, undefined);
                 } else {
                     const ext = preset.extensions;
                     Object.assign(preset, profile.settings);
@@ -552,13 +560,20 @@ export async function openPresetCards(): Promise<void> {
             toastr.success(L('Configuration loaded'));
             refreshActivePresetUI(name);
         } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：主 + 子叠加应用
-            const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                isPromptBaseProfile(b) && b.id === profile.baseId);
-            if (!base) {
+            // 派生 profile：递归解析 parent 链得到完整开关，再叠加自身 changes
+            const states = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            if (states.length === 0) {
                 toastr.warning(L('Base profile not found, applying changes only'));
+            } else {
+                applyBaseProfile(preset, {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'parent',
+                    name: 'Parent',
+                    prompts: states,
+                });
             }
-            const { missing } = applyDeltaProfile(preset, profile, base);
+            const { missing } = applyDeltaProfile(preset, profile, undefined);
             if (missing.length > 0) {
                 toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
             }
@@ -643,10 +658,9 @@ export async function openPresetCards(): Promise<void> {
             if (isPromptBaseProfile(profile)) {
                 profile.prompts = states;
             } else if (isPromptDeltaProfile(profile)) {
-                const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                    isPromptBaseProfile(b) && b.id === profile.baseId);
-                if (base) {
-                    profile.changes = statesToChanges(states, base, profile.changes);
+                const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+                if (parentStates.length > 0) {
+                    profile.changes = statesToChanges(states, parentStates, profile.changes);
                 } else {
                     profile.changes = states.map(s => ({ identifier: s.identifier, enabled: s.enabled }));
                 }
@@ -672,7 +686,10 @@ export async function openPresetCards(): Promise<void> {
             if (!deltaName) return;
 
             const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-            const changes = statesToChanges(states, base, isPromptDeltaProfile(profile) ? profile.changes : []);
+            const parentStates = isPromptDeltaProfile(profile)
+                ? resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[])
+                : base.prompts;
+            const changes = statesToChanges(states, parentStates, isPromptDeltaProfile(profile) ? profile.changes : []);
             profiles.push({
                 formatVersion: 2,
                 kind: 'prompt_delta',
@@ -725,14 +742,13 @@ export async function openPresetCards(): Promise<void> {
             toastr.success(L('Configuration updated'));
             refreshActivePresetUI(name);
         } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：重新基于主 profile 生成差异
-            const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                isPromptBaseProfile(b) && b.id === profile.baseId);
-            if (!base) {
+            // 派生 profile：基于解析后的 parent 状态重新生成差异
+            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            if (parentStates.length === 0) {
                 toastr.warning(L('Base profile not found, cannot update derived configuration'));
                 return;
             }
-            profile.changes = buildDeltaChanges(preset, base);
+            profile.changes = statesToChanges(buildPromptToggleSnapshot(preset), parentStates, profile.changes);
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
@@ -759,9 +775,8 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const base = meta.profiles.find((b): b is PromptBaseProfile =>
-            isPromptBaseProfile(b) && b.id === String(profileId));
-        if (!base) return;
+        const parent = meta.profiles.find((b) => b.id === String(profileId));
+        if (!parent) return;
 
         const deltaName = await Popup.show.input(L('Derived profile name:'), '');
         if (!deltaName) return;
@@ -772,8 +787,8 @@ export async function openPresetCards(): Promise<void> {
             kind: 'prompt_delta',
             id: Date.now().toString() + Math.floor(Math.random() * 1000),
             name: deltaName,
-            baseId: base.id,
-            changes: [], // 初始为空数组：与主 profile 完全相同，后续通过「覆盖」更新差异
+            baseId: parent.id,
+            changes: [], // 初始为空数组：与上级 profile 完全相同，后续通过「覆盖」更新差异
         });
 
         meta.profiles = profiles;
@@ -804,11 +819,16 @@ export async function openPresetCards(): Promise<void> {
         if (!profile) return;
 
         if (isPromptDeltaProfile(profile)) {
-            // 派生：回退到其父（main profile）；若无父则回退到隐藏默认
-            const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                isPromptBaseProfile(b) && b.id === profile.baseId);
-            if (base) {
-                applyBaseProfile(preset, base);
+            // 派生：回退到其上级（base 或上层 delta）；若无上级则回退到隐藏默认
+            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            if (parentStates.length > 0) {
+                applyBaseProfile(preset, {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'parent',
+                    name: 'Parent',
+                    prompts: parentStates,
+                });
                 profile.changes = [];
             } else {
                 if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
@@ -907,17 +927,16 @@ export async function openPresetCards(): Promise<void> {
                 prompts: profile.prompts,
             }, null, 4);
         } else if (isPromptDeltaProfile(profile)) {
-            // 导出自包含：附上 base 快照，导入时可完整还原
-            const base = meta.profiles.find((b): b is PromptBaseProfile =>
-                isPromptBaseProfile(b) && b.id === profile.baseId);
+            // 导出自包含：附上解析后的完整 parent 状态快照，导入时可完整还原
+            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             data = JSON.stringify({
                 kind: profile.kind,
                 formatVersion: profile.formatVersion,
                 baseId: profile.baseId,
-                base: base ? {
-                    name: base.name,
-                    prompts: base.prompts,
-                } : undefined,
+                base: {
+                    name: 'Imported Parent',
+                    prompts: parentStates,
+                },
                 changes: profile.changes,
             }, null, 4);
         } else {

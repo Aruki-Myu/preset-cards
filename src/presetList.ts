@@ -1,6 +1,7 @@
 import { oai_settings, openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
-import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaChange } from './meta.js';
+import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaChange, type PromptDeltaProfile } from './meta.js';
+import { resolveProfileStates } from './promptToggle.js';
 import { L } from './i18n.js';
 
 export interface ModelChip {
@@ -77,9 +78,10 @@ export function buildPresetList(): PresetCardModel[] {
             }
         }
 
-        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; entries: ProfileEntryView[] };
+        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; parentName: string; entries: ProfileEntryView[] };
         const profiles: PresetProfile[] = (Array.isArray(meta.profiles) ? meta.profiles : []).map((p) => {
             let entries: ProfileEntryView[] = [];
+            let parentName = '';
             if (isPromptBaseProfile(p)) {
                 entries = p.prompts.map((e) => ({
                     identifier: e.identifier,
@@ -87,23 +89,19 @@ export function buildPresetList(): PresetCardModel[] {
                     enabled: e.enabled,
                 }));
             } else if (isPromptDeltaProfile(p)) {
-                // 派生：展示 = 继承 base 的全部条目 + changes 叠加（enable 覆盖）
-                const base = (Array.isArray(meta.profiles) ? meta.profiles : [])
-                    .find((b): b is PromptBaseProfile => isPromptBaseProfile(b) && b.id === p.baseId);
-                const baseMap = new Map<string, boolean>();
-                if (base) {
-                    for (const e of base.prompts) baseMap.set(e.identifier, e.enabled);
-                }
+                // 派生：展示 = 递归解析 parent 链的完整开关 + changes 叠加
+                const parent = (Array.isArray(meta.profiles) ? meta.profiles : [])
+                    .find((b) => b.id === p.baseId);
+                if (parent) parentName = parent.name;
+                const resolved = resolveProfileStates(p, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
                 const changeMap = new Map<string, PromptDeltaChange>();
                 for (const c of p.changes) changeMap.set(c.identifier, c);
-                const ids = [...baseMap.keys()];
-                for (const c of p.changes) if (!ids.includes(c.identifier)) ids.push(c.identifier);
-                entries = ids.map((id) => {
-                    const change = changeMap.get(id);
-                    const enabled = change?.enabled !== undefined ? change.enabled : baseMap.get(id) ?? true;
+                entries = resolved.map((e) => {
+                    const change = changeMap.get(e.identifier);
+                    const enabled = change?.enabled !== undefined ? change.enabled : e.enabled;
                     return {
-                        identifier: id,
-                        name: promptNames.get(id) || id,
+                        identifier: e.identifier,
+                        name: promptNames.get(e.identifier) || e.identifier,
                         enabled,
                         hasFields: !!change?.fields && Object.keys(change.fields).length > 0,
                     };
@@ -114,6 +112,7 @@ export function buildPresetList(): PresetCardModel[] {
                 isBase: isPromptBaseProfile(p),
                 isDelta: isPromptDeltaProfile(p),
                 isV1: !isPromptBaseProfile(p) && !isPromptDeltaProfile(p),
+                parentName,
                 entries,
             };
             return row;
@@ -173,6 +172,8 @@ export function getCardsTemplateContext() {
             delete: L('Delete'),
             derive: L('Derive Profile'),
             resetProfile: L('Reset to parent'),
+            derivedFrom: L('Derived from'),
+            derived: L('Derived'),
             base: L('Base'),
             delta: L('Delta'),
             hasValueChanges: L('Has value changes'),

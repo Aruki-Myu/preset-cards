@@ -92,12 +92,12 @@
                         {{#each this.profiles}}
                         <div class="preset_card_profile_row" data-profile-id="{{this.id}}">
                             <div class="preset_card_profile_name_wrap">
-                                {{#if this.isBase}}<span class="preset_card_profile_badge badge_base">[{{../../i18n.base}}]</span>{{/if}}
-                                {{#if this.isDelta}}<span class="preset_card_profile_badge badge_delta">[{{../../i18n.delta}}]</span>{{/if}}
+                                {{#if this.isBase}}<span class="preset_card_profile_badge badge_base">base</span>{{/if}}
+                                {{#if this.isDelta}}{{#if this.parentName}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{this.parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{../../i18n.derived}}</span>{{/if}}{{/if}}
                                 <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
                             </div>
                             <div class="preset_card_profile_actions">
-                                {{#if this.isBase}}<i class="fa-solid fa-code-fork preset_card_profile_derive" title="{{../../i18n.derive}}"></i>{{/if}}
+                                <i class="fa-solid fa-code-fork preset_card_profile_derive" title="{{../../i18n.derive}}"></i>
                                 <i class="fa-solid fa-rotate-left preset_card_profile_reset" title="{{../../i18n.resetProfile}}"></i>
                                 <i class="fa-solid fa-file-export preset_card_profile_export" title="{{../../i18n.exportConfig}}"></i>
                                 <i class="fa-solid fa-floppy-disk preset_card_profile_update" title="{{../../i18n.overwriteConfig}}"></i>
