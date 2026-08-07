@@ -41,86 +41,6 @@ export const MODEL_KEYS: Record<string, string> = {
     [chat_completion_sources.MINIMAX]: 'minimax_model',
 };
 
-/** 保存 profile 时可供勾选的字段分组（键为 settingsToUpdate 中的 preset 键）。 */
-export const PROFILE_FIELD_GROUPS: { id: string; label: string; keys: string[] }[] = [
-    {
-        id: 'sampling',
-        label: 'Sampling',
-        keys: [
-            'temperature', 'top_p', 'top_k', 'top_a', 'min_p', 'repetition_penalty',
-            'frequency_penalty', 'presence_penalty', 'seed', 'n',
-        ],
-    },
-    {
-        id: 'context',
-        label: 'Context',
-        keys: ['openai_max_context', 'openai_max_tokens', 'max_context_unlocked', 'names_behavior'],
-    },
-    {
-        id: 'model',
-        label: 'Model',
-        keys: ['chat_completion_source', 'bias_preset_selected', 'show_external_models', ...Object.values(MODEL_KEYS)],
-    },
-    {
-        id: 'prompting',
-        label: 'Prompts & Formats',
-        keys: [
-            'use_sysprompt', 'squash_system_messages', 'media_inlining', 'inline_image_quality',
-            'assistant_prefill', 'assistant_impersonation', 'send_if_empty', 'impersonation_prompt',
-            'new_chat_prompt', 'new_group_chat_prompt', 'new_example_chat_prompt', 'continue_nudge_prompt',
-            'group_nudge_prompt', 'wi_format', 'scenario_format', 'personality_format',
-            'continue_prefill', 'continue_postfix',
-        ],
-    },
-    {
-        id: 'generation',
-        label: 'Generation',
-        keys: [
-            'stream_openai', 'function_calling', 'tool_call_recurse_limit', 'tool_reasoning_mode',
-            'show_thoughts', 'reasoning_effort', 'verbosity', 'enable_web_search',
-            'request_images', 'request_image_aspect_ratio', 'request_image_resolution',
-        ],
-    },
-];
-
-/** 永远不写进 profile 的字段（连接凭据 / 结构性数据）。 */
-export const PROFILE_FIELD_EXCLUDE: Set<string> = new Set([
-    'extensions',
-    'prompts',
-    'prompt_order',
-    'bypass_status_check',
-    'reverse_proxy', 'proxy_password',
-    'custom_url', 'custom_include_body', 'custom_exclude_body', 'custom_include_headers',
-    'custom_prompt_post_processing',
-    'vertexai_auth_mode', 'vertexai_region', 'vertexai_express_project_id',
-    'azure_base_url', 'azure_deployment_name', 'azure_api_version',
-    'workers_ai_account_id',
-]);
-
-/** preset 键 → 友好显示名（未覆盖的用下划线转空格）。 */
-export const PROFILE_FIELD_LABELS: Record<string, string> = {
-    temperature: 'Temperature', top_p: 'Top P', top_k: 'Top K', top_a: 'Top A', min_p: 'Min P',
-    repetition_penalty: 'Repetition Penalty', frequency_penalty: 'Frequency Penalty',
-    presence_penalty: 'Presence Penalty', seed: 'Seed', n: 'N (responses)',
-    openai_max_context: 'Context Size', openai_max_tokens: 'Response Tokens',
-    max_context_unlocked: 'Unlock Max Context', names_behavior: 'Names Behavior',
-    chat_completion_source: 'Chat Completion Source', bias_preset_selected: 'Bias Preset',
-    show_external_models: 'Show External Models',
-    use_sysprompt: 'Use System Prompt', squash_system_messages: 'Squash System Messages',
-    media_inlining: 'Inline Media', inline_image_quality: 'Image Quality',
-    assistant_prefill: 'Assistant Prefill', assistant_impersonation: 'Assistant Impersonation',
-    send_if_empty: 'Send If Empty', impersonation_prompt: 'Impersonation Prompt',
-    new_chat_prompt: 'New Chat Prompt', new_group_chat_prompt: 'New Group Chat Prompt',
-    new_example_chat_prompt: 'New Example Chat Prompt', continue_nudge_prompt: 'Continue Nudge Prompt',
-    group_nudge_prompt: 'Group Nudge Prompt', wi_format: 'World Info Format',
-    scenario_format: 'Scenario Format', personality_format: 'Personality Format',
-    continue_prefill: 'Continue Prefill', continue_postfix: 'Continue Postfix',
-    stream_openai: 'Streaming', function_calling: 'Function Calling',
-    tool_call_recurse_limit: 'Tool Call Recurse Limit', tool_reasoning_mode: 'Tool Reasoning Mode',
-    show_thoughts: 'Show Thoughts', reasoning_effort: 'Reasoning Effort', verbosity: 'Verbosity',
-    enable_web_search: 'Web Search', request_images: 'Request Images',
-    request_image_aspect_ratio: 'Image Aspect Ratio', request_image_resolution: 'Image Resolution',
-};
 export const LOGO_BASE = `/scripts/extensions/${EXTENSION_NAME}/llm-logos/`;
 
 export const LOCAL_DICT: Record<string, string> = {
@@ -174,7 +94,7 @@ export const LOCAL_DICT: Record<string, string> = {
     'Clear value changes': '清除值变更',
     'Move up': '上移',
     'Move down': '下移',
-    'Global prompt order: the order below applies to ALL characters': '全局 prompt 顺序：下方顺序将作用于所有角色',
+    'Current order is global: moving up/down below affects ALL characters': '当前为全局顺序：下方上移/下移会影响所有角色',
     'Role': '角色',
     'Name': '名称',
     'Content': '内容',

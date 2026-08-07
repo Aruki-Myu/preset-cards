@@ -1,7 +1,7 @@
 import { oai_settings, openai_settings, openai_setting_names, promptManager } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
 import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaProfile } from './meta.js';
-import { resolveProfilePrompts } from './promptToggle.js';
+import { findOrderList, resolveProfilePrompts, resolvePromptOrderTarget } from './promptToggle.js';
 import { L } from './i18n.js';
 
 export interface ModelChip {
@@ -64,13 +64,13 @@ export function buildPresetList(): PresetCardModel[] {
 
         const isActive = name === currentPresetName;
 
-        // 顺序编辑目标条目索引：global → 100001；character → 当前活动角色 id（策略感知）。
+        // 顺序编辑目标条目：global → 100001；character → 活动角色 id（策略感知，见 promptToggle）。
         const promptOrderStrategy = promptManager?.configuration?.promptOrder?.strategy ?? 'global';
-        const orderTarget = promptOrderStrategy === 'character' ? promptManager?.activeCharacter?.id ?? 100001 : 100001;
+        const orderTarget = resolvePromptOrderTarget();
         const orderIndex = new Map<string, number>();
         let orderLength = 0;
         if (isActive && Array.isArray(preset.prompt_order)) {
-            const orderList = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(orderTarget));
+            const orderList = findOrderList(preset, orderTarget);
             if (Array.isArray(orderList?.order)) {
                 orderLength = orderList.order.length;
                 orderList.order.forEach((o: any, i: number) => {
@@ -221,7 +221,7 @@ export function getCardsTemplateContext() {
             saveChanges: L('Save changes'),
             moveUp: L('Move up'),
             moveDown: L('Move down'),
-            globalOrderWarning: L('Global prompt order: the order below applies to ALL characters'),
+            globalOrderWarning: L('Current order is global: moving up/down below affects ALL characters'),
         }
     };
 }

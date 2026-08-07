@@ -70,6 +70,16 @@ export interface PresetMeta {
     defaultSnapshot?: { identifier: string; enabled: boolean }[];
 }
 
+/** 按 id 查 profile（id 归一化为字符串，兼容数字/字符串来源）。 */
+export function getProfile(meta: PresetMeta, profileId: unknown): PresetProfile | undefined {
+    return meta.profiles.find((p) => p.id === String(profileId));
+}
+
+/** 生成新的 profile id（时间戳 + 随机后缀）。 */
+export function newProfileId(): string {
+    return Date.now().toString() + Math.floor(Math.random() * 1000);
+}
+
 /**
  * Read the preset_cards metadata from a preset object.
  */

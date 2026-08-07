@@ -1,4 +1,4 @@
-import { promptManager } from '@sillytavern/scripts/openai';
+import { oai_settings, promptManager } from '@sillytavern/scripts/openai';
 import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
@@ -40,16 +40,26 @@ export function filterFields(fields: Record<string, any> | undefined): PromptFie
 }
 
 /**
- * 按 identifier 回写值字段到 preset.prompts[]。
- * 不碰 prompt_order（值编辑不影响开关）。
- * 返回是否匹配到该 identifier。
+ * R2 镜像 hack（必要 ST workaround，勿删）：若编辑的是当前激活预设，
+ * 同步值字段到运行时的 oai_settings.prompts：生成时 promptManager 读的就是这个对象
+ * （openai.js:1557），不依赖异步的 #settings_preset_openai 刷新；同时让
+ * 「以当前设置覆盖」不再有旧值可回退覆盖（R2：#update_oai_preset →
+ * getChatCompletionPreset(oai_settings) 会把存盘预设覆盖成 oai_settings 的旧快照，
+ * 导致本编辑被抹掉）。
  */
-export function applyFieldsToPreset(preset: Preset, identifier: string, fields: PromptFields): boolean {
+export function mirrorFieldsToActivePreset(presetName: string, identifier: string, fields: PromptFields): void {
+    if (oai_settings.preset_settings_openai !== presetName) return;
+    const livePrompts = Array.isArray(oai_settings.prompts) ? oai_settings.prompts : [];
+    const livePrompt = livePrompts.find((p: any) => p && p.identifier === identifier);
+    if (livePrompt) {
+        Object.assign(livePrompt, filterFields(fields));
+    }
+}
+
+/** 在预设中按 identifier 查找 prompt（Array.isArray 守卫兼容旧对象格式）。 */
+export function findPromptInPreset(preset: Preset, identifier: string): any | undefined {
     const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
-    const prompt = prompts.find((p: any) => p && p.identifier === identifier);
-    if (!prompt) return false;
-    Object.assign(prompt, fields);
-    return true;
+    return prompts.find((p: any) => p && p.identifier === identifier);
 }
 
 /**
@@ -57,8 +67,7 @@ export function applyFieldsToPreset(preset: Preset, identifier: string, fields: 
  * 返回是否匹配到该 identifier。
  */
 export function applyEntryState(preset: Preset, identifier: string, enabled: boolean): boolean {
-    const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
-    const prompt = prompts.find((p: any) => p && p.identifier === identifier);
+    const prompt = findPromptInPreset(preset, identifier);
     if (!prompt) return false;
 
     prompt.enabled = enabled;
@@ -276,6 +285,15 @@ export function applyDeltaProfile(
 }
 
 /**
+ * 在 preset.prompt_order 中查找指定 character_id 的条目。
+ * Array.isArray 守卫兼容旧对象格式 {character_id: {order}}（否则 .find 会抛 TypeError）。
+ */
+export function findOrderList(preset: Preset, characterId: number | string): any {
+    if (!Array.isArray(preset.prompt_order)) return undefined;
+    return preset.prompt_order.find((x: any) => x && String(x.character_id) === String(characterId));
+}
+
+/**
  * 读取 prompt_order 的写入目标角色 id（策略感知）：
  * - global（默认）→ 100001（ST dummyId，作用于所有角色）；
  * - character → promptManager.activeCharacter.id（ST PromptManager.js:1130-1144 维护；
@@ -299,8 +317,7 @@ export function syncPromptOrder(
     preset: Preset,
     entries: { identifier: string; enabled: boolean }[],
 ): void {
-    if (!Array.isArray(preset.prompt_order)) return;
-    const list = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(resolvePromptOrderTarget()));
+    const list = findOrderList(preset, resolvePromptOrderTarget());
     if (!list?.order) return;
 
     for (const entry of entries) {
@@ -319,8 +336,7 @@ export function syncPromptOrder(
  * 旧对象格式 / 缺目标条目 / 越界时安全返回 false。
  */
 export function reorderPromptOrder(preset: Preset, identifier: string, delta: -1 | 1): boolean {
-    if (!Array.isArray(preset.prompt_order)) return false;
-    const list = preset.prompt_order.find((x: any) => x && String(x.character_id) === String(resolvePromptOrderTarget()));
+    const list = findOrderList(preset, resolvePromptOrderTarget());
     if (!list || !Array.isArray(list.order)) return false;
     const order = list.order as { identifier: string }[];
 
@@ -332,37 +348,6 @@ export function reorderPromptOrder(preset: Preset, identifier: string, delta: -1
     const [moved] = order.splice(index, 1);
     order.splice(newIndex, 0, moved);
     return true;
-}
-
-/**
- * 从完整开关状态列表生成派生差异：与 parent 的开关状态逐条对比 enabled。
- * parent 可为 base 或上层 delta（用其解析后的完整状态）。
- * 保留传入的已有差异（fields），仅更新 enabled 不同的条目。
- */
-export function statesToChanges(
-    states: { identifier: string; enabled: boolean }[],
-    parentStates: { identifier: string; enabled: boolean }[],
-    previousChanges: PromptDeltaChange[] = [],
-): PromptDeltaChange[] {
-    const baseEnabled = new Map(parentStates.map((p) => [p.identifier, p.enabled]));
-    const previousFields = new Map(
-        previousChanges.filter((c) => c.fields).map((c) => [c.identifier, c.fields]),
-    );
-
-    const changes: PromptDeltaChange[] = [];
-    for (const state of states) {
-        const baseValue = baseEnabled.get(state.identifier);
-        const enabledDiff = baseValue !== undefined && baseValue !== state.enabled;
-        const fields = previousFields.get(state.identifier);
-        if (enabledDiff || fields) {
-            const change: PromptDeltaChange = { identifier: state.identifier };
-            if (enabledDiff) change.enabled = state.enabled;
-            if (fields) change.fields = fields;
-            changes.push(change);
-        }
-    }
-
-    return changes;
 }
 
 /**
@@ -391,7 +376,7 @@ export function buildPromptSnapshot(
 
 /**
  * 从快照生成派生差异（含值差异）：
- * - enabled：与 parent 解析后的完整状态逐条对比（同 statesToChanges 逻辑）；
+ * - enabled：与 parent 解析后的完整状态逐条对比（纯开关差异）；
  * - fields：逐条白名单字段，仅当快照值 ≠ 父链解析值才写入；等于父值 → 不写（即清除）；
  * - previousChanges.fields 对未编辑的 identifier 原样保留，已编辑的 identifier 重建（覆盖旧差异）。
  */

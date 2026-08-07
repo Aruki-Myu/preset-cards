@@ -1,7 +1,7 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate, promptManager } from '@sillytavern/scripts/openai';
-import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
+import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
 import { eventSource, event_types } from '@sillytavern/scripts/events';
@@ -10,9 +10,12 @@ import { L } from './i18n.js';
 import {
     isPromptBaseProfile,
     isPromptDeltaProfile,
+    getProfile,
+    newProfileId,
     readMeta,
     saveMeta,
     type Preset,
+    type PresetProfile,
     type PromptBaseProfile,
     type PromptDeltaChange,
     type PromptDeltaProfile,
@@ -26,17 +29,17 @@ import {
     buildPromptSnapshot,
     buildPromptToggleSnapshot,
     capturePromptFields,
-    filterFields,
+    findPromptInPreset,
+    mirrorFieldsToActivePreset,
     resolveParentStates,
     resolveProfilePrompts,
     resolveProfileStates,
     reorderPromptOrder,
     snapshotToChanges,
-    statesToChanges,
 } from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
-import { openEditModal } from './editModal.js';
+import { openEditModal, openPromptEditPopup } from './editModal.js';
 
 export async function openPresetCards(): Promise<void> {
     // Backfill hidden default snapshots before rendering so reset always has a baseline
@@ -95,6 +98,14 @@ export async function openPresetCards(): Promise<void> {
         }
     }
 
+    // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
+    async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
+        dialog.find('#preset_cards_search').trigger('input');
+    }
+
     // Two-button choice popup: update current profile, or create a new subprofile (delta).
     async function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
         const container = $('<div class="preset_cards_save_choice"></div>');
@@ -127,86 +138,61 @@ export async function openPresetCards(): Promise<void> {
         return PROMPT_FIELD_WHITELIST.every((key) => a[key] === b[key]);
     }
 
-    // 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
-    async function openPromptEditPopup(preset: Preset, identifier: string): Promise<PromptFields | null> {
-        const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
-        const prompt = prompts.find((p: any) => p && p.identifier === identifier);
-        if (!prompt) return null;
-
-        const isMarker = !!prompt.marker;
-
-        const container = $('<div class="preset_cards_prompt_edit_form"></div>');
-        container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
-
-        if (isMarker) {
-            container.append($('<div class="preset_cards_prompt_edit_marker_notice"></div>')
-                .text(L('This is a marker prompt. Its content is managed by SillyTavern and cannot be edited here.')));
-        }
-
-        const nameWrap = $('<div class="preset_edit_field"></div>');
-        nameWrap.append($('<label></label>').text(L('Name')));
-        const nameInput = $('<input type="text">').val(prompt.name ?? '');
-        nameWrap.append(nameInput);
-
-        // 位置与角色：两个窄控件并排一行，窄屏自动换行
-        const rowWrap = $('<div class="preset_cards_prompt_edit_row"></div>');
-
-        const roleWrap = $('<div class="preset_edit_field"></div>');
-        roleWrap.append($('<label></label>').text(L('Role')));
-        const roleSelect = $('<select class="text_pole"></select>');
-        for (const [value, label] of [['system', L('System')], ['user', L('User')], ['assistant', L('AI Assistant')]] as [string, string][]) {
-            const option = $('<option></option>').attr('value', value).text(label);
-            if (value === (prompt.role ?? 'system')) option.attr('selected', 'selected');
-            roleSelect.append(option);
-        }
-        roleWrap.append(roleSelect);
-
-        const positionWrap = $('<div class="preset_edit_field"></div>');
-        positionWrap.append($('<label></label>').text(L('Position')));
-        const positionSelect = $('<select class="text_pole"></select>');
-        // 与 ST INJECTION_POSITION 一致（PromptManager.js:37-40）：0=Relative, 1=In-chat
-        for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
-            const option = $('<option></option>').attr('value', value).text(label);
-            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
-            positionSelect.append(option);
-        }
-        positionWrap.append(positionSelect);
-
-        rowWrap.append(roleWrap);
-        rowWrap.append(positionWrap);
-
-        const contentWrap = $('<div class="preset_edit_field"></div>');
-        contentWrap.append($('<label></label>').text(L('Content')));
-        const contentInput = $('<textarea></textarea>').val(prompt.content ?? '');
-        if (isMarker) {
-            contentInput.prop('disabled', true);
-        }
-        contentWrap.append(contentInput);
-
-        container.append(nameWrap);
-        container.append(rowWrap);
-        container.append(contentWrap);
-
-        const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-            okButton: t`Save`,
-            cancelButton: t`Cancel`,
-            allowVerticalScrolling: true,
+    // 把当前开关/值快照合并进主 profile（「保存→更新」与「覆盖」共用）：
+    // enabled 全量回写；fields 仅对本次会话编辑过且有净变化的条目写回，其余条目保留既有 fields，
+    // 避免重建快照时丢失此前已保存的值编辑。
+    function mergeBaseSnapshot(profile: PromptBaseProfile, snapshot: { identifier: string; enabled: boolean; fields?: PromptFields }[]): void {
+        const previousPrompts = profile.prompts;
+        profile.prompts = snapshot.map((s) => {
+            const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
+                identifier: s.identifier,
+                enabled: s.enabled,
+            };
+            const session = sessionEdits.get(s.identifier);
+            if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
+                entry.fields = s.fields;
+            } else if (!session) {
+                const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
+                if (prior) entry.fields = prior;
+            }
+            return entry;
         });
-        if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
+    }
 
-        // 只返回与当前值不同的字段，避免把默认值写进 profile
-        const fields: PromptFields = {};
-        const role = String(roleSelect.val() ?? 'system');
-        const name = String(nameInput.val() ?? '');
-        const content = String(contentInput.val() ?? '');
-        const position = Number(positionSelect.val() ?? 0);
-
-        if (role !== (prompt.role ?? 'system')) fields.role = role;
-        if (name !== (prompt.name ?? '')) fields.name = name;
-        if (!isMarker && content !== (prompt.content ?? '')) fields.content = content;
-        if (position !== (prompt.injection_position ?? 0)) fields.injection_position = position;
-
-        return Object.keys(fields).length > 0 ? fields : null;
+    // 加载配置的核心分支（base / delta / v1），两种加载入口共用。
+    // 差异由调用方处理：delta 的「缺失 prompt 已跳过」toast 仅卡片点击加载时显示（showMissingToast）；
+    // v1 的 refresh 时机不同（简洁模式走 refreshActivePresetUI，卡片点击走条件性原生刷新）。
+    function applyProfileToPreset(
+        preset: Preset,
+        profile: PresetProfile,
+        allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
+        opts?: { showMissingToast?: boolean },
+    ): void {
+        if (isPromptBaseProfile(profile)) {
+            applyBaseProfile(preset, profile);
+        } else if (isPromptDeltaProfile(profile)) {
+            const states = resolveProfileStates(profile, allProfiles);
+            if (states.length === 0) {
+                toastr.warning(L('Base profile not found, applying changes only'));
+            } else {
+                applyBaseProfile(preset, {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'parent',
+                    name: 'Parent',
+                    prompts: states,
+                });
+            }
+            const { missing } = applyDeltaProfile(preset, profile, undefined);
+            if (opts?.showMissingToast && missing.length > 0) {
+                toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
+            }
+        } else {
+            // v1 全量快照：合并 settings，保留 extensions
+            const ext = preset.extensions;
+            Object.assign(preset, profile.settings);
+            preset.extensions = ext;
+        }
     }
 
     // ---- Search ----
@@ -253,30 +239,10 @@ export async function openPresetCards(): Promise<void> {
             </div>`);
 
             row.on('click', async function () {
-                const profile = meta.profiles.find(pr => pr.id === String(row.data('profile-id')));
+                const profile = getProfile(meta, row.data('profile-id'));
                 if (!profile) return;
 
-                if (isPromptBaseProfile(profile)) {
-                    applyBaseProfile(preset, profile);
-                } else if (isPromptDeltaProfile(profile)) {
-                    const states = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-                    if (states.length === 0) {
-                        toastr.warning(L('Base profile not found, applying changes only'));
-                    } else {
-                        applyBaseProfile(preset, {
-                            formatVersion: 2,
-                            kind: 'prompt_base',
-                            id: profile.baseId || 'parent',
-                            name: 'Parent',
-                            prompts: states,
-                        });
-                    }
-                    applyDeltaProfile(preset, profile, undefined);
-                } else {
-                    const ext = preset.extensions;
-                    Object.assign(preset, profile.settings);
-                    preset.extensions = ext;
-                }
+                applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
 
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration loaded'));
@@ -364,10 +330,7 @@ export async function openPresetCards(): Promise<void> {
         await clearImageCache();
         toastr.success(L('Cache cleared successfully'));
 
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        applyCachedBackgrounds(dialog);
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid({ applyBackgrounds: true });
     });
 
     // ---- Edit button ----
@@ -639,7 +602,7 @@ export async function openPresetCards(): Promise<void> {
         profiles.push({
             formatVersion: 2,
             kind: 'prompt_base',
-            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+            id: newProfileId(),
             name: profileName,
             prompts: buildPromptToggleSnapshot(preset),
         });
@@ -649,9 +612,7 @@ export async function openPresetCards(): Promise<void> {
         toastr.success(L('Base profile saved'));
 
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid();
     });
 
     // ---- Profiles: Load Configuration (click = apply + expand) ----
@@ -665,47 +626,18 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        if (isPromptBaseProfile(profile)) {
-            // 主 profile：只回写 prompts 开关并同步 prompt_order
-            applyBaseProfile(preset, profile);
+        applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], { showMissingToast: true });
 
-            // Save to disk so changes persist
-            await saveMeta(name, idx, meta);
-            toastr.success(L('Configuration loaded'));
-            refreshActivePresetUI(name);
-        } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：递归解析 parent 链得到完整开关，再叠加自身 changes
-            const states = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-            if (states.length === 0) {
-                toastr.warning(L('Base profile not found, applying changes only'));
-            } else {
-                applyBaseProfile(preset, {
-                    formatVersion: 2,
-                    kind: 'prompt_base',
-                    id: profile.baseId || 'parent',
-                    name: 'Parent',
-                    prompts: states,
-                });
-            }
-            const { missing } = applyDeltaProfile(preset, profile, undefined);
-            if (missing.length > 0) {
-                toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
-            }
-
-            // Save to disk so changes persist
+        if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
+            // 主/派生 profile：保存到磁盘并同步运行态
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration loaded'));
             refreshActivePresetUI(name);
         } else {
-            // v1 全量快照：合并 settings，保留 extensions
-            const ext = preset.extensions;
-            Object.assign(preset, profile.settings);
-            preset.extensions = ext;
-
-            // Save to disk so changes persist
+            // v1 全量快照
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration loaded'));
 
@@ -763,8 +695,7 @@ export async function openPresetCards(): Promise<void> {
         const editedFields = await openPromptEditPopup(preset, identifier);
         if (!editedFields) return;
 
-        const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
-        const prompt = prompts.find((p: any) => p && p.identifier === identifier);
+        const prompt = findPromptInPreset(preset, identifier);
         if (!prompt) return;
 
         // 记录本次编辑，保存时据此计算值差异
@@ -776,19 +707,8 @@ export async function openPresetCards(): Promise<void> {
         // 写入插件既有的同一个 preset 对象，不立即 saveMeta（与开关行为一致）
         Object.assign(prompt, editedFields);
 
-        // 若编辑的是当前激活预设，同步到运行时的 oai_settings.prompts：
-        // 生成时 promptManager 读的就是这个对象（openai.js:1557），不依赖异步的
-        // #settings_preset_openai 刷新；同时让"以当前设置覆盖"不再有旧值可回退覆盖
-        // （R2：#update_oai_preset → getChatCompletionPreset(oai_settings) 会把存盘
-        // 预设覆盖成 oai_settings 的旧快照，导致本编辑被抹掉）。
-        const name = card.attr('data-preset-name') as string;
-        if (oai_settings.preset_settings_openai === name) {
-            const livePrompts = Array.isArray(oai_settings.prompts) ? oai_settings.prompts : [];
-            const livePrompt = livePrompts.find((p: any) => p && p.identifier === identifier);
-            if (livePrompt) {
-                Object.assign(livePrompt, filterFields(editedFields));
-            }
-        }
+        // 若编辑的是当前激活预设，同步到运行时的 oai_settings.prompts（R2 镜像，见 promptToggle）
+        mirrorFieldsToActivePreset(card.attr('data-preset-name') as string, identifier, editedFields);
 
         // Mark the row as modified so the save button shows up
         row.addClass('modified');
@@ -812,7 +732,7 @@ export async function openPresetCards(): Promise<void> {
         const identifier = String(entry.data('identifier'));
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
         if (isPromptBaseProfile(profile)) {
@@ -884,7 +804,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
         // Collect current switch states + value fields for the edited entries
@@ -897,22 +817,8 @@ export async function openPresetCards(): Promise<void> {
         if (choice === 'update') {
             if (isPromptBaseProfile(profile)) {
                 // enabled 全量合并；fields 仅对本次编辑的条目（与编辑初值无净变化时清除），
-                // 其余条目保留既有 fields，避免重建快照时丢失此前已保存的值编辑
-                const previousPrompts = profile.prompts;
-                profile.prompts = snapshot.map((s) => {
-                    const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
-                        identifier: s.identifier,
-                        enabled: s.enabled,
-                    };
-                    const session = sessionEdits.get(s.identifier);
-                    if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
-                        entry.fields = s.fields;
-                    } else if (!session) {
-                        const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
-                        if (prior) entry.fields = prior;
-                    }
-                    return entry;
-                });
+                // 其余条目保留既有 fields（见 mergeBaseSnapshot）
+                mergeBaseSnapshot(profile, snapshot);
             } else if (isPromptDeltaProfile(profile)) {
                 const parentEntries = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
                 if (parentEntries.length > 0) {
@@ -947,7 +853,7 @@ export async function openPresetCards(): Promise<void> {
             profiles.push({
                 formatVersion: 2,
                 kind: 'prompt_delta',
-                id: Date.now().toString() + Math.floor(Math.random() * 1000),
+                id: newProfileId(),
                 name: deltaName,
                 baseId: profile.id,
                 changes,
@@ -965,9 +871,7 @@ export async function openPresetCards(): Promise<void> {
         sessionEdits.clear();
 
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid();
     });
 
     // ---- Profiles: Update Configuration ----
@@ -992,40 +896,26 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
         if (isPromptBaseProfile(profile)) {
             // 覆盖仅重同步 enabled 开关；fields 保留既有值（本次会话未编辑的条目不丢），
-            // 本次会话编辑过的条目按与编辑初值是否有净变化决定保留/清除（与保存流程一致）
-            const previousPrompts = profile.prompts;
+            // 本次会话编辑过的条目按与编辑初值是否有净变化决定保留/清除（与保存流程一致，见 mergeBaseSnapshot）
             const snapshot = buildPromptSnapshot(preset, { includeFields: new Set(sessionEdits.keys()) });
-            profile.prompts = snapshot.map((s) => {
-                const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
-                    identifier: s.identifier,
-                    enabled: s.enabled,
-                };
-                const session = sessionEdits.get(s.identifier);
-                if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
-                    entry.fields = s.fields;
-                } else if (!session) {
-                    const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
-                    if (prior) entry.fields = prior;
-                }
-                return entry;
-            });
+            mergeBaseSnapshot(profile, snapshot);
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
             refreshActivePresetUI(name);
         } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：基于解析后的 parent 状态重新生成差异（statesToChanges 保留既有 fields）
+            // 派生 profile：基于解析后的 parent 状态重新生成差异（snapshotToChanges 保留既有 fields）
             const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             if (parentStates.length === 0) {
                 toastr.warning(L('Base profile not found, cannot update derived configuration'));
                 return;
             }
-            profile.changes = statesToChanges(buildPromptToggleSnapshot(preset), parentStates, profile.changes);
+            profile.changes = snapshotToChanges(buildPromptToggleSnapshot(preset), parentStates, profile.changes);
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
@@ -1052,7 +942,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const parent = meta.profiles.find((b) => b.id === String(profileId));
+        const parent = getProfile(meta, profileId);
         if (!parent) return;
 
         if (!isPromptBaseProfile(parent) && !isPromptDeltaProfile(parent)) {
@@ -1067,7 +957,7 @@ export async function openPresetCards(): Promise<void> {
         profiles.push({
             formatVersion: 2,
             kind: 'prompt_delta',
-            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+            id: newProfileId(),
             name: deltaName,
             baseId: parent.id,
             changes: [], // 初始为空数组：与上级 profile 完全相同，后续通过「覆盖」更新差异
@@ -1078,9 +968,7 @@ export async function openPresetCards(): Promise<void> {
         toastr.success(L('Derived profile created'));
 
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid();
     });
 
     // ---- Profiles: Reset to parent (delta -> base; base -> hidden default) ----
@@ -1097,7 +985,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
         if (isPromptDeltaProfile(profile)) {
@@ -1154,9 +1042,7 @@ export async function openPresetCards(): Promise<void> {
         }
 
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid();
     });
 
     // ---- Profiles: Delete Configuration ----
@@ -1170,7 +1056,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
 
         let confirmText = L('Delete this configuration?');
         if (profile && isPromptBaseProfile(profile)) {
@@ -1198,7 +1084,7 @@ export async function openPresetCards(): Promise<void> {
         const preset = openai_settings[card.data('preset-index') as number] as Preset;
 
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
         let data: string;
@@ -1252,7 +1138,7 @@ export async function openPresetCards(): Promise<void> {
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-                const newId = Date.now().toString() + Math.floor(Math.random() * 1000);
+                const newId = newProfileId();
 
                 if (parsed && parsed.kind === 'prompt_base' && Array.isArray(parsed.prompts)) {
                     profiles.push({
@@ -1274,7 +1160,7 @@ export async function openPresetCards(): Promise<void> {
                         if (existing) {
                             baseId = existing.id;
                         } else {
-                            const baseIdNew = Date.now().toString() + Math.floor(Math.random() * 1000);
+                            const baseIdNew = newProfileId();
                             profiles.push({
                                 formatVersion: 2,
                                 kind: 'prompt_base',
@@ -1313,10 +1199,7 @@ export async function openPresetCards(): Promise<void> {
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration saved'));
 
-                const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-                dialog.html($(newHtml).html());
-                applyCachedBackgrounds(dialog);
-                dialog.find('#preset_cards_search').trigger('input');
+                await refreshGrid({ applyBackgrounds: true });
             } catch (err) {
                 console.error(err);
                 toastr.error(L('Failed to parse configuration file'));
@@ -1367,7 +1250,7 @@ export async function openPresetCards(): Promise<void> {
 
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
-                const profile = meta.profiles.find(p => p.id === String(profileId));
+                const profile = getProfile(meta, profileId);
                 if (profile) {
                     profile.name = newName;
                     await saveMeta(name, idx, meta);

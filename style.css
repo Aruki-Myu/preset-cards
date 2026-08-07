@@ -1043,7 +1043,7 @@
 }
 
 .preset_cards_prompt_edit_form .preset_edit_field textarea {
-    min-height: 120px;
+    min-height: 190px;
 }
 
 /* 位置 / 角色 同排双列，窄屏自动换行 */
@@ -1145,7 +1145,7 @@
     }
 
     .preset_cards_prompt_edit_form .preset_edit_field textarea {
-        min-height: 96px;
+        min-height: 150px;
     }
     
     #preset_cards_grid {
