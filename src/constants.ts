@@ -171,6 +171,7 @@ export const LOCAL_DICT: Record<string, string> = {
     'Create new subprofile': '新建为子配置',
     'Save changes to': '保存修改到：',
     'Edit prompt': '编辑 prompt',
+    'Clear value changes': '清除值变更',
     'Role': '角色',
     'Name': '名称',
     'Content': '内容',

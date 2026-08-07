@@ -786,6 +786,40 @@ export async function openPresetCards(): Promise<void> {
         }
     });
 
+    // ---- Profiles: Clear entry value change (base → 删 entry.fields；delta → 删 change.fields) ----
+    dialog.on('click', '.preset_card_profile_entry_clear', async function (e) {
+        e.stopPropagation();
+        const entry = $(this).closest('.preset_card_profile_entry');
+        const row = entry.closest('.preset_card_profile_row');
+        const card = row.closest('.preset_card');
+        const idx = card.data('preset-index') as number;
+        const profileId = row.data('profile-id');
+        const identifier = String(entry.data('identifier'));
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const profile = meta.profiles.find(p => p.id === String(profileId));
+        if (!profile) return;
+
+        if (isPromptBaseProfile(profile)) {
+            const item = profile.prompts.find((p) => p.identifier === identifier);
+            if (item) delete item.fields;
+        } else if (isPromptDeltaProfile(profile)) {
+            const change = profile.changes.find((c) => c.identifier === identifier);
+            if (change) delete change.fields;
+        } else {
+            return;
+        }
+
+        // 本地回写后标记 modified（与编辑/开关行为一致），保存时落盘
+        row.addClass('modified');
+        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+
+        // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
+        entry.removeClass('has_fields');
+        entry.find('.preset_card_profile_entry_modified').remove();
+        $(this).remove();
+    });
+
     // ---- Profiles: Save expanded edits ----
     dialog.on('click', '.preset_card_profile_save_btn', async function (e) {
         e.stopPropagation();

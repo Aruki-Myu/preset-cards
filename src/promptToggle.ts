@@ -27,6 +27,16 @@ export function capturePromptFields(prompt: Record<string, any> | undefined): Pr
     return fields;
 }
 
+/** 只保留白名单键的值字段（R10：应用边界防御，丢弃导入/旧数据里的任意键）。 */
+function filterFields(fields: Record<string, any> | undefined): PromptFields {
+    const out: PromptFields = {};
+    if (!fields) return out;
+    for (const key of PROMPT_FIELD_WHITELIST) {
+        if (fields[key] !== undefined) out[key] = fields[key];
+    }
+    return out;
+}
+
 /**
  * 按 identifier 回写值字段到 preset.prompts[]。
  * 不碰 prompt_order（值编辑不影响开关）。
@@ -100,7 +110,7 @@ export function applyBaseProfile(preset: Preset, profile: PromptBaseProfile): vo
         if (!prompt) continue;
         prompt.enabled = entry.enabled;
         if (entry.fields) {
-            Object.assign(prompt, entry.fields);
+            Object.assign(prompt, filterFields(entry.fields));
         }
         orderEntries.push({ identifier: entry.identifier, enabled: entry.enabled });
     }
@@ -249,7 +259,7 @@ export function applyDeltaProfile(
             prompt.enabled = change.enabled;
         }
         if (change.fields) {
-            Object.assign(prompt, change.fields);
+            Object.assign(prompt, filterFields(change.fields));
         }
 
         orderEntries.push({ identifier: change.identifier, enabled: !!prompt.enabled });

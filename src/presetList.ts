@@ -15,6 +15,8 @@ export interface ProfileEntryView {
     name: string;
     enabled: boolean;
     hasFields?: boolean;
+    /** 是否本 profile 自身存有该条目的值差异（base 看 fields；delta 看自身 changes），可清除。 */
+    clearable?: boolean;
     /** 是否允许编辑内容：仅普通 prompt（非 system_prompt / marker）可编辑。 */
     editable?: boolean;
 }
@@ -98,11 +100,16 @@ export function buildPresetList(): PresetCardModel[] {
                 const resolved = resolveProfilePrompts(p, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
                 entries = resolved.map((e) => {
                     const prompt = promptLookup.get(e.identifier);
+                    const hasFields = !!e.fields && Object.keys(e.fields).length > 0;
                     return {
                         identifier: e.identifier,
                         name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
                         enabled: e.enabled,
-                        hasFields: !!e.fields && Object.keys(e.fields).length > 0,
+                        hasFields,
+                        // base 的 fields 即自身值变更；delta 需自身 changes 里有 fields（父链继承的不可由本 profile 清除）
+                        clearable: isPromptDeltaProfile(p)
+                            ? p.changes.some((c) => c.identifier === e.identifier && c.fields && Object.keys(c.fields).length > 0)
+                            : hasFields,
                         // system_prompt / marker 条目不渲染编辑入口；预设中缺失的条目也无法编辑
                         editable: !!prompt && !prompt.system_prompt && !prompt.marker,
                     };
@@ -181,6 +188,7 @@ export function getCardsTemplateContext() {
             noEntries: L('No entries'),
             toggleEntry: L('Toggle entry'),
             editPrompt: L('Edit prompt'),
+            clearValueChange: L('Clear value changes'),
             saveChanges: L('Save changes'),
         }
     };

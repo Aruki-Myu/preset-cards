@@ -860,11 +860,40 @@
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
 }
 
+.preset_card_profile_entry_clear {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--SmartThemeBodyColor);
+    font-size: 10px;
+    opacity: 0;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
+}
+
+.preset_card_profile_entry:hover .preset_card_profile_entry_clear {
+    opacity: 0.7;
+}
+
+.preset_card_profile_entry_clear:hover {
+    opacity: 1 !important;
+    color: #f44336;
+    background: rgba(244, 67, 54, 0.12);
+}
+
 .preset_card_profile_entry.has_fields {
     background: rgba(230, 162, 60, 0.08);
 }
 
-.preset_card_profile_entry.has_fields .preset_card_profile_entry_edit {
+.preset_card_profile_entry.has_fields .preset_card_profile_entry_edit,
+.preset_card_profile_entry.has_fields .preset_card_profile_entry_clear {
     opacity: 0.7;
 }
 
@@ -1048,7 +1077,8 @@
     }
 
     /* Always reveal edit buttons on touch */
-    .preset_card_profile_entry_edit {
+    .preset_card_profile_entry_edit,
+    .preset_card_profile_entry_clear {
         opacity: 0.7;
     }
     
