@@ -56,6 +56,8 @@ export interface PresetMeta {
     models: string[];
     profiles: PresetProfile[];
     bgImage: string;
+    /** 隐藏默认基准：自动维护，不显示、不参与派生。供重置回退。 */
+    defaultSnapshot?: { identifier: string; enabled: boolean }[];
 }
 
 /**
@@ -68,6 +70,7 @@ export function readMeta(preset: Preset | undefined): PresetMeta {
         models: Array.isArray(ext?.models) ? ext.models : [],
         profiles: Array.isArray(ext?.profiles) ? ext.profiles : [],
         bgImage: ext?.bgImage || '',
+        defaultSnapshot: Array.isArray(ext?.defaultSnapshot) ? ext.defaultSnapshot : undefined,
     };
 }
 
@@ -85,6 +88,7 @@ export async function saveMeta(presetName: string, presetIndex: number, meta: Pr
         models: meta.models || [],
         profiles: meta.profiles || [],
         bgImage: meta.bgImage || '',
+        defaultSnapshot: meta.defaultSnapshot,
     };
 
     // Also update oai_settings if this is the current preset

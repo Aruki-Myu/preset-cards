@@ -21,6 +21,9 @@ import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
 
 export async function openPresetCards(): Promise<void> {
+    // Backfill hidden default snapshots before rendering so reset always has a baseline
+    await ensureDefaultSnapshots();
+
     let presets = buildPresetList();
 
     let isBatchMode = false;
@@ -47,6 +50,19 @@ export async function openPresetCards(): Promise<void> {
         if (oai_settings.preset_settings_openai === presetName) {
             $('#settings_preset_openai').trigger('change');
             promptManager?.render?.(false);
+        }
+    }
+
+    // Backfill a hidden default snapshot for presets that don't have one yet.
+    // Called once when the dialog opens, so "reset" always has a baseline.
+    async function ensureDefaultSnapshots(): Promise<void> {
+        for (const [name, index] of Object.entries(openai_setting_names)) {
+            const preset = openai_settings[index] as Preset | undefined;
+            if (!preset) continue;
+            const meta = readMeta(preset);
+            if (meta.defaultSnapshot && meta.defaultSnapshot.length > 0) continue;
+            meta.defaultSnapshot = buildPromptToggleSnapshot(preset);
+            await saveMeta(name, index as number, meta);
         }
     }
 
@@ -763,6 +779,77 @@ export async function openPresetCards(): Promise<void> {
         meta.profiles = profiles;
         await saveMeta(name, idx, meta);
         toastr.success(L('Derived profile created'));
+
+        // Refresh UI
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        dialog.find('#preset_cards_search').trigger('input');
+    });
+
+    // ---- Profiles: Reset to parent (delta -> base; base -> hidden default) ----
+    dialog.on('click', '.preset_card_profile_reset', async function (e) {
+        e.stopPropagation();
+        const row = $(this).closest('.preset_card_profile_row');
+        const profileId = row.data('profile-id');
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const confirm = await callGenericPopup(L('Reset this configuration to its parent?'), POPUP_TYPE.CONFIRM);
+        if (!confirm) return;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const profile = meta.profiles.find(p => p.id === String(profileId));
+        if (!profile) return;
+
+        if (isPromptDeltaProfile(profile)) {
+            // 派生：回退到其父（main profile）；若无父则回退到隐藏默认
+            const base = meta.profiles.find((b): b is PromptBaseProfile =>
+                isPromptBaseProfile(b) && b.id === profile.baseId);
+            if (base) {
+                applyBaseProfile(preset, base);
+                profile.changes = [];
+            } else {
+                if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
+                    toastr.warning(L('No default baseline available'));
+                    return;
+                }
+                const tmp: PromptBaseProfile = {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'default',
+                    name: 'Default',
+                    prompts: meta.defaultSnapshot,
+                };
+                applyBaseProfile(preset, tmp);
+                profile.changes = [];
+            }
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration reset'));
+            refreshActivePresetUI(name);
+        } else if (isPromptBaseProfile(profile)) {
+            // 主 profile：回退到隐藏默认基准
+            if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
+                toastr.warning(L('No default baseline available'));
+                return;
+            }
+            profile.prompts = structuredClone(meta.defaultSnapshot);
+            const tmp: PromptBaseProfile = {
+                formatVersion: 2,
+                kind: 'prompt_base',
+                id: profile.id,
+                name: profile.name,
+                prompts: meta.defaultSnapshot,
+            };
+            applyBaseProfile(preset, tmp);
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration reset'));
+            refreshActivePresetUI(name);
+        } else {
+            toastr.warning(L('This profile type cannot be reset'));
+            return;
+        }
 
         // Refresh UI
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());

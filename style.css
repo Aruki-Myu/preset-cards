@@ -907,7 +907,8 @@
 .preset_card_profile_edit:hover,
 .preset_card_profile_update:hover,
 .preset_card_profile_export:hover,
-.preset_card_profile_derive:hover {
+.preset_card_profile_derive:hover,
+.preset_card_profile_reset:hover {
     color: var(--SmartThemeQuoteColor);
 }
 

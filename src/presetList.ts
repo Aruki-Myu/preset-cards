@@ -157,6 +157,7 @@ export function getCardsTemplateContext() {
             rename: L('Rename'),
             delete: L('Delete'),
             derive: L('Derive Profile'),
+            resetProfile: L('Reset to parent'),
             base: L('Base'),
             delta: L('Delta'),
             hasValueChanges: L('Has value changes'),

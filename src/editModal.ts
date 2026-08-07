@@ -58,7 +58,7 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
         return $(this).data('model-id') as string;
     }).get();
 
-    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles });
+    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
 }
