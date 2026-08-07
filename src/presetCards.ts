@@ -1,7 +1,7 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate, promptManager } from '@sillytavern/scripts/openai';
-import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
+import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
 import { eventSource, event_types } from '@sillytavern/scripts/events';
@@ -14,9 +14,24 @@ import {
     saveMeta,
     type Preset,
     type PromptBaseProfile,
+    type PromptDeltaChange,
     type PromptDeltaProfile,
+    type PromptFields,
 } from './meta.js';
-import { applyBaseProfile, applyDeltaProfile, applyEntryState, buildPromptToggleSnapshot, resolveParentStates, resolveProfileStates, statesToChanges } from './promptToggle.js';
+import {
+    PROMPT_FIELD_WHITELIST,
+    applyBaseProfile,
+    applyDeltaProfile,
+    applyEntryState,
+    buildPromptSnapshot,
+    buildPromptToggleSnapshot,
+    capturePromptFields,
+    resolveParentStates,
+    resolveProfilePrompts,
+    resolveProfileStates,
+    snapshotToChanges,
+    statesToChanges,
+} from './promptToggle.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
@@ -30,6 +45,9 @@ export async function openPresetCards(): Promise<void> {
     let isBatchMode = false;
     const batchSelectedCards = new Set<string>();
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
+
+    // 本次打开期间的值编辑记录：identifier → { 编辑前字段, 编辑后字段 }
+    const sessionEdits = new Map<string, { initial: PromptFields; edited: PromptFields }>();
 
     const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
     const dialog = $(html);
@@ -70,7 +88,7 @@ export async function openPresetCards(): Promise<void> {
     // Two-button choice popup: update current profile, or create a new subprofile (delta).
     async function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
         const container = $('<div class="preset_cards_save_choice"></div>');
-        container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Save modified switches to')));
+        container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Save changes to')));
         const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
         buttons.append($('<button class="menu_button"></button>')
             .text(L('Update current profile'))
@@ -90,6 +108,104 @@ export async function openPresetCards(): Promise<void> {
 
         callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: '', cancelButton: '' });
         return promise;
+    }
+
+    // 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）
+    function promptFieldsEqual(a: PromptFields, b: PromptFields): boolean {
+        return PROMPT_FIELD_WHITELIST.every((key) => a[key] === b[key]);
+    }
+
+    // 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
+    async function openPromptEditPopup(preset: Preset, identifier: string): Promise<PromptFields | null> {
+        const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+        const prompt = prompts.find((p: any) => p && p.identifier === identifier);
+        if (!prompt) return null;
+
+        const isMarker = !!prompt.marker;
+        const positionOptions: [string, string][] = [['0', L('Relative')], ['1', L('In-chat')]];
+
+        const container = $('<div class="preset_cards_prompt_edit_form"></div>');
+        container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
+
+        if (isMarker) {
+            container.append($('<div class="preset_cards_prompt_edit_marker_notice"></div>')
+                .text(L('This is a marker prompt. Its content is managed by SillyTavern and cannot be edited here.')));
+        }
+
+        const roleWrap = $('<div class="preset_edit_field"></div>');
+        roleWrap.append($('<label></label>').text(L('Role')));
+        const roleSelect = $('<select class="text_pole"></select>');
+        for (const [value, label] of [['system', L('System')], ['user', L('User')], ['assistant', L('AI Assistant')]] as [string, string][]) {
+            const option = $('<option></option>').attr('value', value).text(label);
+            if (value === (prompt.role ?? 'system')) option.attr('selected', 'selected');
+            roleSelect.append(option);
+        }
+        roleWrap.append(roleSelect);
+        container.append(roleWrap);
+
+        const nameWrap = $('<div class="preset_edit_field"></div>');
+        nameWrap.append($('<label></label>').text(L('Name')));
+        const nameInput = $('<input type="text">').val(prompt.name ?? '');
+        nameWrap.append(nameInput);
+        container.append(nameWrap);
+
+        const contentWrap = $('<div class="preset_edit_field"></div>');
+        contentWrap.append($('<label></label>').text(L('Content')));
+        const contentInput = $('<textarea></textarea>').val(prompt.content ?? '');
+        if (isMarker) {
+            contentInput.prop('disabled', true);
+        }
+        contentWrap.append(contentInput);
+        container.append(contentWrap);
+
+        container.append($('<div class="preset_cards_prompt_edit_section_title"></div>').text(L('Injection settings')));
+
+        const posWrap = $('<div class="preset_edit_field"></div>');
+        posWrap.append($('<label></label>').text(L('Position')));
+        const posSelect = $('<select class="text_pole"></select>');
+        for (const [value, label] of positionOptions) {
+            const option = $('<option></option>').attr('value', value).text(label);
+            if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
+            posSelect.append(option);
+        }
+        posWrap.append(posSelect);
+        container.append(posWrap);
+
+        const depthWrap = $('<div class="preset_edit_field"></div>');
+        depthWrap.append($('<label></label>').text(L('Depth')));
+        const depthInput = $('<input type="number">').val(prompt.injection_depth ?? 4);
+        depthWrap.append(depthInput);
+        container.append(depthWrap);
+
+        const orderWrap = $('<div class="preset_edit_field"></div>');
+        orderWrap.append($('<label></label>').text(L('Order')));
+        const orderInput = $('<input type="number">').val(prompt.injection_order ?? 100);
+        orderWrap.append(orderInput);
+        container.append(orderWrap);
+
+        const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
+            okButton: t`Save`,
+            cancelButton: t`Cancel`,
+        });
+        if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
+
+        // 只返回与当前值不同的字段，避免把默认值写进 profile
+        const fields: PromptFields = {};
+        const role = String(roleSelect.val() ?? 'system');
+        const name = String(nameInput.val() ?? '');
+        const content = String(contentInput.val() ?? '');
+        const position = Number(posSelect.val() ?? 0);
+        const depth = Number(depthInput.val() ?? 4);
+        const order = Number(orderInput.val() ?? 100);
+
+        if (role !== (prompt.role ?? 'system')) fields.role = role;
+        if (name && name !== (prompt.name ?? '')) fields.name = name;
+        if (!isMarker && content !== (prompt.content ?? '')) fields.content = content;
+        if (position !== (prompt.injection_position ?? 0)) fields.injection_position = position;
+        if (depth !== (prompt.injection_depth ?? 4)) fields.injection_depth = depth;
+        if (order !== (prompt.injection_order ?? 100)) fields.injection_order = order;
+
+        return Object.keys(fields).length > 0 ? fields : null;
     }
 
     // ---- Search ----
@@ -633,6 +749,43 @@ export async function openPresetCards(): Promise<void> {
         row.find('.preset_card_profile_save_btn').removeClass('hidden');
     });
 
+    // ---- Profiles: Edit entry value fields (opens the prompt edit popup) ----
+    dialog.on('click', '.preset_card_profile_entry_edit', async function (e) {
+        e.stopPropagation();
+        const entry = $(this).closest('.preset_card_profile_entry');
+        const row = entry.closest('.preset_card_profile_row');
+        const card = row.closest('.preset_card');
+        const idx = card.data('preset-index') as number;
+        const identifier = String(entry.data('identifier'));
+        const preset = openai_settings[idx] as Preset;
+
+        const editedFields = await openPromptEditPopup(preset, identifier);
+        if (!editedFields) return;
+
+        const prompts = Array.isArray(preset.prompts) ? preset.prompts : [];
+        const prompt = prompts.find((p: any) => p && p.identifier === identifier);
+        if (!prompt) return;
+
+        // 记录本次编辑，保存时据此计算值差异
+        sessionEdits.set(identifier, {
+            initial: capturePromptFields(prompt),
+            edited: editedFields,
+        });
+
+        // 写入插件既有的同一个 preset 对象，不立即 saveMeta（与开关行为一致）
+        Object.assign(prompt, editedFields);
+
+        // Mark the row as modified so the save button shows up
+        row.addClass('modified');
+        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+
+        // 本地刷新条目名
+        const nameEl = entry.find('.preset_card_profile_entry_name');
+        if (nameEl.length && typeof editedFields.name === 'string') {
+            nameEl.text(editedFields.name).attr('title', identifier);
+        }
+    });
+
     // ---- Profiles: Save expanded edits ----
     dialog.on('click', '.preset_card_profile_save_btn', async function (e) {
         e.stopPropagation();
@@ -647,8 +800,8 @@ export async function openPresetCards(): Promise<void> {
         const profile = meta.profiles.find(p => p.id === String(profileId));
         if (!profile) return;
 
-        // Collect current switch states from the preset's actual value
-        const states = buildPromptToggleSnapshot(preset);
+        // Collect current switch states + value fields for the edited entries
+        const snapshot = buildPromptSnapshot(preset, { includeFields: new Set(sessionEdits.keys()) });
 
         // Ask: update current profile or create a new subprofile (delta)?
         const choice = await chooseProfileSaveTarget();
@@ -656,13 +809,29 @@ export async function openPresetCards(): Promise<void> {
 
         if (choice === 'update') {
             if (isPromptBaseProfile(profile)) {
-                profile.prompts = states;
+                // enabled 全量合并；fields 仅对本次编辑的条目，与编辑初值无净变化时清除
+                profile.prompts = snapshot.map((s) => {
+                    const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
+                        identifier: s.identifier,
+                        enabled: s.enabled,
+                    };
+                    const session = sessionEdits.get(s.identifier);
+                    if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
+                        entry.fields = s.fields;
+                    }
+                    return entry;
+                });
             } else if (isPromptDeltaProfile(profile)) {
-                const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-                if (parentStates.length > 0) {
-                    profile.changes = statesToChanges(states, parentStates, profile.changes);
+                const parentEntries = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+                if (parentEntries.length > 0) {
+                    profile.changes = snapshotToChanges(snapshot, parentEntries, profile.changes);
                 } else {
-                    profile.changes = states.map(s => ({ identifier: s.identifier, enabled: s.enabled }));
+                    // 父链缺失：全量写成差异（含值字段）
+                    profile.changes = snapshot.map((s) => {
+                        const change: PromptDeltaChange = { identifier: s.identifier, enabled: s.enabled };
+                        if (s.fields) change.fields = s.fields;
+                        return change;
+                    });
                 }
             } else {
                 // v1: not editable via switches
@@ -681,8 +850,8 @@ export async function openPresetCards(): Promise<void> {
             if (!deltaName) return;
 
             const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-            const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-            const changes = statesToChanges(states, parentStates, isPromptDeltaProfile(profile) ? profile.changes : []);
+            const parentEntries = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            const changes = snapshotToChanges(snapshot, parentEntries, isPromptDeltaProfile(profile) ? profile.changes : []);
             profiles.push({
                 formatVersion: 2,
                 kind: 'prompt_delta',
@@ -695,6 +864,13 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Derived profile created'));
         }
+
+        // 修复 R3：保存后刷新活动预设，否则 promptManager 列表与实际生效值不一致。
+        // 注意：活动预设绝不触发 #update_oai_preset（R2），它会把 prompts 从 oai_settings 回写覆盖掉本次编辑。
+        refreshActivePresetUI(name);
+
+        // 本批编辑已消费，清空记录
+        sessionEdits.clear();
 
         // Refresh UI
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());

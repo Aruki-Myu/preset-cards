@@ -15,6 +15,8 @@ export interface ProfileEntryView {
     name: string;
     enabled: boolean;
     hasFields?: boolean;
+    /** 是否允许编辑内容：仅普通 prompt（非 system_prompt / marker）可编辑。 */
+    editable?: boolean;
 }
 
 /** 单张卡片的视图模型,喂给 cards.html 模板。 */
@@ -70,10 +72,14 @@ export function buildPresetList(): PresetCardModel[] {
         // Decorate each profile row with a type indicator so cards.html can render
         // [Base] / [Delta] badges, the derive button, and expandable entry list.
         const promptNames = new Map<string, string>();
+        const promptLookup = new Map<string, any>();
         if (Array.isArray(preset.prompts)) {
             for (const p of preset.prompts) {
-                if (p && typeof p.identifier === 'string' && p.identifier && typeof p.name === 'string') {
-                    promptNames.set(p.identifier, p.name);
+                if (p && typeof p.identifier === 'string' && p.identifier) {
+                    promptLookup.set(p.identifier, p);
+                    if (typeof p.name === 'string') {
+                        promptNames.set(p.identifier, p.name);
+                    }
                 }
             }
         }
@@ -90,12 +96,17 @@ export function buildPresetList(): PresetCardModel[] {
                 }
                 // 展示 = 递归解析 parent 链的完整开关 + 值字段（base 与 delta 统一走 resolveProfilePrompts）
                 const resolved = resolveProfilePrompts(p, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-                entries = resolved.map((e) => ({
-                    identifier: e.identifier,
-                    name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
-                    enabled: e.enabled,
-                    hasFields: !!e.fields && Object.keys(e.fields).length > 0,
-                }));
+                entries = resolved.map((e) => {
+                    const prompt = promptLookup.get(e.identifier);
+                    return {
+                        identifier: e.identifier,
+                        name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
+                        enabled: e.enabled,
+                        hasFields: !!e.fields && Object.keys(e.fields).length > 0,
+                        // system_prompt / marker 条目不渲染编辑入口；预设中缺失的条目也无法编辑
+                        editable: !!prompt && !prompt.system_prompt && !prompt.marker,
+                    };
+                });
             }
             const row: ProfileRow = {
                 ...p,
@@ -169,6 +180,7 @@ export function getCardsTemplateContext() {
             hasValueChanges: L('Has value changes'),
             noEntries: L('No entries'),
             toggleEntry: L('Toggle entry'),
+            editPrompt: L('Edit prompt'),
             saveChanges: L('Save changes'),
         }
     };
