@@ -62,6 +62,21 @@ const LOCAL_DICT = {
     'Select modules to save in this snapshot:': '选择在此快照中保存的模块：',
     'Generation Settings (Temp, Top P, etc.)': '生成参数 (温度、Top P 等核心参数)',
     'Prompts & States (System Prompts, Positions, Toggles)': '提示词与条目状态 (内置提示词、条目位置与开关)',
+    'Enter AAD (Additional Authenticated Data) for encryption:': '请输入加密用的密钥(AAD):',
+    'Enter AAD (Additional Authenticated Data) for decryption:': '请输入解密用的密钥(AAD):',
+    'Select import format:': '请选择导入的格式：',
+    '.myu (Encrypted)': '.myu (加密格式)',
+    '.json (Normal)': '.json (普通格式)',
+    'Select export format:': '请选择导出的格式：',
+    'Exported successfully. IMPORTANT: Please safely store the downloaded .pckey file. You cannot decrypt the preset without it!': '导出成功！请务必妥善保管好同时下载的 .pckey 密钥文件，并将其与 .myu 文件分开存放！如果没有此密钥，您将永远无法解密此预设！',
+    'Encryption failed': '加密失败',
+    'Do you want to use a custom pckey and only modify AAD?': '是否使用自定义pckey文件加密，仅修改验证密钥(AAD)？',
+    'No, generate new': '否，生成全新密钥',
+    'Please select the .pckey file to encrypt this preset:': '请选择要用于加密此预设的 .pckey 密钥文件：',
+    'Exported encrypted preset with custom pckey.': '已使用自定义 pckey 导出加密预设。',
+    'Decrypted and imported successfully': '解密并导入成功！',
+    'Decryption failed. Check your AAD and key.': '解密失败，请检查您的 AAD 和密钥是否正确。',
+    'Invalid .myu file': '无效的 .myu 文件',
 };
 
 // ─────────────────────────────────────────
@@ -188,6 +203,69 @@ function L(text) {
         return LOCAL_DICT[text];
     }
     return text;
+}
+
+// ─────────────────────────────────────────
+// WebCrypto AES-GCM Helpers
+// ─────────────────────────────────────────
+function generateHex(bytes) {
+    const arr = new Uint8Array(bytes);
+    crypto.getRandomValues(arr);
+    return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const len = bytes.byteLength;
+    for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(bytes[i]);
+    }
+    return btoa(binary);
+}
+
+function base64ToArrayBuffer(base64) {
+    const binary_string = window.atob(base64);
+    const len = binary_string.length;
+    const bytes = new Uint8Array(len);
+    for (let i = 0; i < len; i++) {
+        bytes[i] = binary_string.charCodeAt(i);
+    }
+    return bytes.buffer;
+}
+
+async function encryptDataGCM(dataStr, hexKey, hexIv, aadStr) {
+    const enc = new TextEncoder();
+    const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const ivBytes = new Uint8Array(hexIv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+
+    const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
+
+    const encryptedBuffer = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: ivBytes, additionalData: enc.encode(aadStr), tagLength: 128 },
+        cryptoKey,
+        enc.encode(dataStr)
+    );
+
+    return arrayBufferToBase64(encryptedBuffer);
+}
+
+async function decryptDataGCM(base64Ciphertext, hexKey, hexIv, aadStr) {
+    const enc = new TextEncoder();
+    const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const ivBytes = new Uint8Array(hexIv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
+    const encryptedBuffer = base64ToArrayBuffer(base64Ciphertext);
+
+    const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
+
+    const decryptedBuffer = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: ivBytes, additionalData: enc.encode(aadStr), tagLength: 128 },
+        cryptoKey,
+        encryptedBuffer
+    );
+
+    const dec = new TextDecoder();
+    return dec.decode(decryptedBuffer);
 }
 
 /**
@@ -620,7 +698,7 @@ async function openPresetCards() {
         const touch = e.type === 'touchmove' ? e.originalEvent.touches[0] || e.originalEvent.changedTouches[0] : e;
         const currentX = touch.pageX;
         const currentY = touch.pageY;
-        
+
         if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
             isDragging = true;
             clearTimeout(pressTimer);
@@ -737,8 +815,19 @@ async function openPresetCards() {
     });
 
     // ---- Export button ----
-    dialog.on('click', '.preset_card_export_btn', function (e) {
+    dialog.on('click', '.preset_card_export_btn', async function (e) {
         e.stopPropagation();
+
+        const exportType = await callGenericPopup(
+            L('Select export format:'),
+            POPUP_TYPE.CONFIRM,
+            '',
+            { okButton: L('.myu (Encrypted)'), cancelButton: L('.json (Normal)') }
+        );
+
+        if (exportType === POPUP_RESULT.CANCEL) return;
+        const isEncrypted = (exportType === POPUP_RESULT.AFFIRMATIVE);
+
         const name = $(this).attr('data-preset-name');
         const idx = $(this).data('preset-index');
         const preset = structuredClone(openai_settings[idx]);
@@ -769,8 +858,87 @@ async function openPresetCards() {
             }
         }
 
-        const data = JSON.stringify(preset, null, 4);
-        download(data, `${name}.json`, 'application/json');
+        const dataStr = JSON.stringify(preset, null, 4);
+
+        if (!isEncrypted) {
+            download(dataStr, `${name}.json`, 'application/json');
+            return;
+        }
+
+        let hexKey = null;
+        let hexIv = null;
+        let generateNew = true;
+
+        if (localStorage.getItem('preset_cards_has_encrypted')) {
+            const useCustom = await callGenericPopup(
+                L('Do you want to use a custom pckey and only modify AAD?'),
+                POPUP_TYPE.CONFIRM,
+                '',
+                { okButton: L('Yes'), cancelButton: L('No, generate new') }
+            );
+
+            if (useCustom === POPUP_RESULT.CANCEL) return;
+
+            if (useCustom === POPUP_RESULT.AFFIRMATIVE) {
+                generateNew = false;
+                toastr.info(L('Please select the .pckey file to encrypt this preset:'));
+
+                const pckeyFile = await new Promise(resolve => {
+                    const pckeyInput = $('<input type="file" accept=".pckey" style="display:none;">');
+                    pckeyInput.on('change', ev2 => resolve(ev2.target.files[0]));
+                    pckeyInput.click();
+                });
+
+                if (!pckeyFile) return;
+
+                try {
+                    const pckeyStr = await new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = ev => resolve(ev.target.result);
+                        reader.onerror = err => reject(err);
+                        reader.readAsText(pckeyFile);
+                    });
+
+                    const keyArr = JSON.parse(atob(pckeyStr));
+                    hexKey = keyArr[0];
+                    hexIv = keyArr[1];
+                } catch (e) {
+                    console.error(e);
+                    toastr.error(L('Invalid .pckey file'));
+                    return;
+                }
+            }
+        }
+
+        const aadStr = await Popup.show.input(L('Enter AAD (Additional Authenticated Data) for encryption:'), '');
+        if (aadStr === null) return; // Cancelled
+
+        try {
+            if (generateNew) {
+                hexKey = generateHex(32);
+                hexIv = generateHex(12);
+            }
+
+            const base64Ciphertext = await encryptDataGCM(dataStr, hexKey, hexIv, aadStr);
+
+            download(base64Ciphertext, `${name}.myu`, 'text/plain');
+
+            if (generateNew) {
+                const pckeyPayload = btoa(JSON.stringify([hexKey, hexIv]));
+                download(pckeyPayload, `${name}.pckey`, 'text/plain');
+                localStorage.setItem('preset_cards_has_encrypted', 'true');
+
+                await callGenericPopup(
+                    L('Exported successfully. IMPORTANT: Please safely store the downloaded .pckey file. You cannot decrypt the preset without it!'),
+                    POPUP_TYPE.TEXT
+                );
+            } else {
+                toastr.success(L('Exported encrypted preset with custom pckey.'));
+            }
+        } catch (err) {
+            console.error('Encryption failed', err);
+            toastr.error(L('Encryption failed'));
+        }
     });
 
     // ---- Delete button ----
@@ -1218,12 +1386,98 @@ async function openPresetCards() {
     });
 
     // ---- Import button ----
-    dialog.on('click', '#preset_cards_import_btn', function () {
-        $('#openai_preset_import_file').trigger('click');
-        // Let SillyTavern's native import handler do the rest.
-        // It will parse the file, save the preset, and switch to it.
-        // We will just close the modal since a new preset was imported and the grid is now stale.
-        dialog.closest('.popup').find('.popup-controls .menu_button').click();
+    dialog.on('click', '#preset_cards_import_btn', async function () {
+        const importType = await callGenericPopup(
+            L('Select import format:'),
+            POPUP_TYPE.CONFIRM,
+            '',
+            { okButton: L('.myu (Encrypted)'), cancelButton: L('.json (Normal)') }
+        );
+
+        if (importType === POPUP_RESULT.AFFIRMATIVE) {
+            let $customInput = $('#preset_cards_custom_import_myu');
+            if ($customInput.length === 0) {
+                $customInput = $('<input type="file" id="preset_cards_custom_import_myu" accept=".myu" style="display:none;">');
+                $('body').append($customInput);
+
+                $customInput.on('change', async function (e) {
+                    const file = e.target.files[0];
+                    if (!file) return;
+                    $customInput.val(''); // reset
+
+                    const reader = new FileReader();
+                    reader.onload = async (ev) => {
+                        try {
+                            const ciphertext = ev.target.result.trim();
+                            if (!ciphertext) throw new Error("Empty .myu file");
+
+                            toastr.info(L('Please select the .pckey file to decrypt this preset:'));
+
+                            const pckeyFile = await new Promise(resolve => {
+                                const pckeyInput = $('<input type="file" accept=".pckey" style="display:none;">');
+                                pckeyInput.on('change', ev2 => resolve(ev2.target.files[0]));
+                                pckeyInput.click();
+                            });
+                            if (!pckeyFile) return;
+
+                            const pckeyReader = new FileReader();
+                            pckeyReader.onload = async (ev3) => {
+                                try {
+                                    const pckeyStr = ev3.target.result;
+                                    const keyArr = JSON.parse(atob(pckeyStr));
+                                    const hexKey = keyArr[0];
+                                    const hexIv = keyArr[1];
+
+                                    const aadStr = await Popup.show.input(L('Enter AAD (Additional Authenticated Data) for decryption:'), '');
+                                    if (aadStr === null) return;
+
+                                    const decryptedJsonStr = await decryptDataGCM(ciphertext, hexKey, hexIv, aadStr);
+                                    const importedPreset = JSON.parse(decryptedJsonStr);
+
+                                    let newName = file.name.replace('.myu', '');
+                                    let counter = 1;
+                                    let checkName = newName;
+                                    while (Object.keys(openai_setting_names).includes(checkName)) {
+                                        checkName = `${newName} (${counter})`;
+                                        counter++;
+                                    }
+
+                                    importedPreset.name = checkName;
+
+                                    const response = await fetch('/api/presets/save', {
+                                        method: 'POST',
+                                        headers: getRequestHeaders(),
+                                        body: JSON.stringify({
+                                            apiId: 'openai',
+                                            name: checkName,
+                                            preset: importedPreset,
+                                        }),
+                                    });
+
+                                    if (!response.ok) throw new Error("Server save failed");
+
+                                    toastr.success(L('Decrypted and imported successfully'));
+                                    setTimeout(() => location.reload(), 1500);
+                                } catch (decErr) {
+                                    console.error(decErr);
+                                    toastr.error(L('Decryption failed. Check your AAD and key.'));
+                                }
+                            };
+                            pckeyReader.readAsText(pckeyFile);
+
+                        } catch (err) {
+                            console.error(err);
+                            toastr.error(L('Invalid .myu file'));
+                        }
+                    };
+                    reader.readAsText(file);
+                });
+            }
+            $customInput.trigger('click');
+        } else if (importType === POPUP_RESULT.NEGATIVE) {
+            $('#openai_preset_import_file').trigger('click');
+            dialog.closest('.popup').find('.popup-controls .menu_button').click();
+        }
     });
 
     updateCount(presets.length, presets.length);
