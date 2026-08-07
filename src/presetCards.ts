@@ -30,6 +30,7 @@ import {
     buildPromptSnapshot,
     buildPromptToggleSnapshot,
     capturePromptFields,
+    filterFields,
     findPromptInPreset,
     mirrorFieldsToActivePreset,
     resolveParentStates,
@@ -822,6 +823,38 @@ export async function openPresetCards(): Promise<void> {
             return;
         }
 
+        // 本次会话编辑过该条：彻底撤销（full undo）——删 sessionEdits 记录（保存不再重捕获此条，
+        // 否则快照会重新从运行时取回被清掉的 fields）、还原运行时值为会话记录的 initial，
+        // 并同步到活动预设运行时，使 UI/运行时与存储一致。
+        const session = sessionEdits.get(identifier);
+        if (session) {
+            sessionEdits.delete(identifier);
+            const prompt = findPromptInPreset(preset, identifier);
+            if (prompt) {
+                // 清白名单键再写回初始值，去掉编辑新增的键（与编辑方向相反的完整还原）
+                for (const key of PROMPT_FIELD_WHITELIST) {
+                    if (!(key in session.initial)) delete prompt[key];
+                }
+                Object.assign(prompt, session.initial);
+            }
+            // 活动预设的运行时 oai_settings.prompts 同步还原（R2 镜像的对称操作）
+            if (oai_settings.preset_settings_openai === card.attr('data-preset-name')) {
+                const livePrompts = Array.isArray(oai_settings.prompts) ? oai_settings.prompts : [];
+                const livePrompt = livePrompts.find((p: any) => p && p.identifier === identifier);
+                if (livePrompt) {
+                    for (const key of PROMPT_FIELD_WHITELIST) {
+                        if (!(key in session.initial)) delete livePrompt[key];
+                    }
+                    Object.assign(livePrompt, filterFields(session.initial));
+                }
+            }
+            // 本地刷新条目名，反映还原后的值
+            const nameEl = entry.find('.preset_card_profile_entry_name');
+            if (nameEl.length && typeof session.initial.name === 'string') {
+                nameEl.text(session.initial.name).attr('title', identifier);
+            }
+        }
+
         // 本地回写后标记 modified（与编辑/开关行为一致），保存时落盘
         row.addClass('modified');
         row.find('.preset_card_profile_save_btn').removeClass('hidden');
@@ -897,7 +930,8 @@ export async function openPresetCards(): Promise<void> {
                 // 其余条目保留既有 fields（见 mergeBaseSnapshot）
                 mergeBaseSnapshot(profile, snapshot);
             } else if (isPromptDeltaProfile(profile)) {
-                const parentEntries = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+                // 基线用父链解析状态（不含本 delta 自身 changes），否则未编辑的已存差异与基线相等而被 diff 掉
+                const parentEntries = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
                 if (parentEntries.length > 0) {
                     profile.changes = snapshotToChanges(snapshot, parentEntries, profile.changes);
                 } else {
@@ -1203,7 +1237,15 @@ export async function openPresetCards(): Promise<void> {
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-                const newId = newProfileId();
+                // 同一毫秒内生成多个 id 可能重复：对既有 id 及本批已生成 id 去重
+                const usedIds = new Set(profiles.map((p) => p.id));
+                const freshId = (): string => {
+                    let id = newProfileId();
+                    while (usedIds.has(id)) id = newProfileId();
+                    usedIds.add(id);
+                    return id;
+                };
+                const newId = freshId();
 
                 if (parsed && parsed.kind === 'prompt_tree' && Array.isArray(parsed.profiles)) {
                     // 完整分支链导入：oldId → 实际 id 映射，按 root→leaf 顺序重建
@@ -1220,7 +1262,7 @@ export async function openPresetCards(): Promise<void> {
                             if (existing) {
                                 if (entry.id !== undefined) idMap.set(String(entry.id), existing.id);
                             } else {
-                                const baseNewId = newProfileId();
+                                const baseNewId = freshId();
                                 profiles.push({
                                     formatVersion: 2,
                                     kind: 'prompt_base',
@@ -1239,7 +1281,7 @@ export async function openPresetCards(): Promise<void> {
                             profiles.push({
                                 formatVersion: 2,
                                 kind: 'prompt_delta',
-                                id: newProfileId(),
+                                id: freshId(),
                                 name: isTarget ? profileName : (entry.name || profileName),
                                 baseId: resolvedBaseId || rawBaseId,
                                 changes: entry.changes,
@@ -1269,7 +1311,7 @@ export async function openPresetCards(): Promise<void> {
                         if (existing) {
                             baseId = existing.id;
                         } else {
-                            const baseIdNew = newProfileId();
+                            const baseIdNew = freshId();
                             profiles.push({
                                 formatVersion: 2,
                                 kind: 'prompt_base',
