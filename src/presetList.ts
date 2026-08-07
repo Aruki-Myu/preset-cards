@@ -1,6 +1,6 @@
 import { oai_settings, openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
-import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile } from './meta.js';
+import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaChange } from './meta.js';
 import { L } from './i18n.js';
 
 export interface ModelChip {
@@ -87,12 +87,27 @@ export function buildPresetList(): PresetCardModel[] {
                     enabled: e.enabled,
                 }));
             } else if (isPromptDeltaProfile(p)) {
-                entries = p.changes.map((c) => ({
-                    identifier: c.identifier,
-                    name: promptNames.get(c.identifier) || c.identifier,
-                    enabled: c.enabled !== undefined ? c.enabled : true,
-                    hasFields: !!c.fields && Object.keys(c.fields).length > 0,
-                }));
+                // 派生：展示 = 继承 base 的全部条目 + changes 叠加（enable 覆盖）
+                const base = (Array.isArray(meta.profiles) ? meta.profiles : [])
+                    .find((b): b is PromptBaseProfile => isPromptBaseProfile(b) && b.id === p.baseId);
+                const baseMap = new Map<string, boolean>();
+                if (base) {
+                    for (const e of base.prompts) baseMap.set(e.identifier, e.enabled);
+                }
+                const changeMap = new Map<string, PromptDeltaChange>();
+                for (const c of p.changes) changeMap.set(c.identifier, c);
+                const ids = [...baseMap.keys()];
+                for (const c of p.changes) if (!ids.includes(c.identifier)) ids.push(c.identifier);
+                entries = ids.map((id) => {
+                    const change = changeMap.get(id);
+                    const enabled = change?.enabled !== undefined ? change.enabled : baseMap.get(id) ?? true;
+                    return {
+                        identifier: id,
+                        name: promptNames.get(id) || id,
+                        enabled,
+                        hasFields: !!change?.fields && Object.keys(change.fields).length > 0,
+                    };
+                });
             }
             const row: ProfileRow = {
                 ...p,
