@@ -551,6 +551,8 @@ async function openPresetCards() {
     // ---- Long press for Concise Mode Profiles ----
     let pressTimer;
     let isDragging = false;
+    let startX = 0;
+    let startY = 0;
 
     async function showConciseProfilesModal(card) {
         const name = card.attr('data-preset-name');
@@ -601,6 +603,10 @@ async function openPresetCards() {
         if (!isConciseMode || isBatchMode) return;
         if (e.type === 'mousedown' && e.which !== 1) return; // Only left click
 
+        const touch = e.type === 'touchstart' ? e.originalEvent.touches[0] || e.originalEvent.changedTouches[0] : e;
+        startX = touch.pageX;
+        startY = touch.pageY;
+
         isDragging = false;
         const card = $(this);
 
@@ -610,12 +616,18 @@ async function openPresetCards() {
         }, 600);
     });
 
-    dialog.on('mousemove touchmove', '.preset_card', function () {
-        isDragging = true;
-        clearTimeout(pressTimer);
+    dialog.on('mousemove touchmove', '.preset_card', function (e) {
+        const touch = e.type === 'touchmove' ? e.originalEvent.touches[0] || e.originalEvent.changedTouches[0] : e;
+        const currentX = touch.pageX;
+        const currentY = touch.pageY;
+        
+        if (Math.abs(currentX - startX) > 10 || Math.abs(currentY - startY) > 10) {
+            isDragging = true;
+            clearTimeout(pressTimer);
+        }
     });
 
-    dialog.on('mouseup touchend mouseleave', '.preset_card', function () {
+    dialog.on('mouseup touchend touchcancel mouseleave', '.preset_card', function () {
         clearTimeout(pressTimer);
     });
 
