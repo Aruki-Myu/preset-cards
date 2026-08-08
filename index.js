@@ -15,6 +15,60 @@ import { settingsToUpdate } from '/scripts/openai.js';
 import { eventSource, event_types } from '/scripts/events.js';
 
 // ─────────────────────────────────────────
+// Rust WASM Fast Preset Loading
+// ─────────────────────────────────────────
+import initWasm, { parse_settings_fast } from './wasm/rust_core.js';
+
+let wasmInitialized = false;
+try {
+    await initWasm();
+    wasmInitialized = true;
+    console.log("preset-cards: Rust WASM core initialized successfully!");
+} catch (e) {
+    console.error("preset-cards: Failed to init WASM", e);
+}
+
+const originalFetch = window.fetch;
+window.fetch = async (...args) => {
+    const url = args[0];
+    if (url === '/api/settings/get' && wasmInitialized) {
+        console.time("WASM_Preset_Parsing");
+        const response = await originalFetch(...args);
+        const text = await response.text();
+        try {
+            const parsedObj = parse_settings_fast(text);
+            console.timeEnd("WASM_Preset_Parsing");
+            // Return a mocked Response
+            const mockResponse = {
+                ok: response.ok,
+                status: response.status,
+                headers: response.headers,
+                json: async () => parsedObj,
+                text: async () => text,
+                clone: () => mockResponse
+            };
+            return mockResponse;
+        } catch (e) {
+            console.error("WASM Parsing failed, falling back to original", e);
+            console.timeEnd("WASM_Preset_Parsing");
+            return new Response(text, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers
+            });
+        }
+    }
+    return originalFetch(...args);
+};
+
+// Patch JSON.parse to be idempotent, since ST will call it on objects we already parsed
+const originalJsonParse = JSON.parse;
+JSON.parse = function(text, reviver) {
+    if (typeof text === 'object' && text !== null) return text;
+    return originalJsonParse(text, reviver);
+};
+
+// ─────────────────────────────────────────
 // Constants
 // ─────────────────────────────────────────
 
