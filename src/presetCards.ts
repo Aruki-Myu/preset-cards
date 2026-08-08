@@ -714,6 +714,7 @@ export async function openPresetCards(): Promise<void> {
         // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲并收起保存按钮
         clearBufferedForName(name);
         card.find('.preset_card_profile_row').removeClass('modified');
+        card.find('.preset_card_profile_entry').removeClass('dirty');
         card.find('.preset_card_profile_save_btn').addClass('hidden');
 
         // Toggle expanded entry list (click again to collapse)
@@ -853,6 +854,12 @@ export async function openPresetCards(): Promise<void> {
 
         // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
         entry.removeClass('has_fields');
+        // 缓冲清空后（值编辑与开关缓冲均无）该条不再是「会话未保存」状态，移除 dirty 高亮；
+        // 若 toggle 缓冲仍在，则本条目属于「开/关待保存」，保留蓝色。
+        const clearKey = bufferKey(name, identifier);
+        if (!sessionEdits.has(clearKey) && !pendingToggles.has(clearKey)) {
+            entry.removeClass('dirty');
+        }
         entry.find('.preset_card_profile_entry_modified').remove();
         $(this).remove();
     });

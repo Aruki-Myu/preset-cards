@@ -129,8 +129,10 @@ export function buildPresetList(): PresetCardModel[] {
                         name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
                         enabled: e.enabled,
                         hasFields,
-                        // 本 profile 自身存有的持久差异：base 的 prompts[].fields 即自身值变更（hasFields 等价）；
-                        // delta 需自身 changes 里有 fields 或 enabled（开关差异），父链继承的差异不属于本 profile。
+                        // hasFields 基于 resolveProfilePrompts（递归合并父链）→ 含继承自父 profile 的 fields；
+                        // hasPersistentDiff 仅本 profile 自身差异：base 取自身 prompts[].fields（= hasFields），
+                        // delta 取自身 changes 里的 fields/enabled，父链继承的差异不属于本 profile。
+                        // 故「子 delta 有继承值差异 → 有铅笔（hasFields）无琥珀（hasPersistentDiff）」为预期行为。
                         hasPersistentDiff: isPromptDeltaProfile(p)
                             ? p.changes.some((c) => c.identifier === e.identifier
                                 && (c.enabled !== undefined || (c.fields && Object.keys(c.fields).length > 0)))
