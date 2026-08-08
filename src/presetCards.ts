@@ -142,10 +142,25 @@ export async function openPresetCards(): Promise<void> {
         }
     }
 
+    // 重渲染后按当前缓冲恢复 dirty 高亮：保存/加载 profile/reset 已清缓冲，自然不恢复；
+    // 未清缓冲的路径（如「保存 base profile」后继续编辑）则按 bufferKey 逐条还原。
+    function applyDirtyHighlights(): void {
+        dialog.find('.preset_card_profile_entry').each(function () {
+            const entry = $(this);
+            const name = entry.closest('.preset_card').attr('data-preset-name') as string;
+            const identifier = String(entry.data('identifier'));
+            const key = bufferKey(name, identifier);
+            if (sessionEdits.has(key) || pendingToggles.has(key)) {
+                entry.addClass('dirty');
+            }
+        });
+    }
+
     // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
+        applyDirtyHighlights();
         if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
         dialog.find('#preset_cards_search').trigger('input');
     }
@@ -723,6 +738,9 @@ export async function openPresetCards(): Promise<void> {
         const identifier = String(entry.data('identifier'));
         pendingToggles.set(bufferKey(name, identifier), !on);
 
+        // 本会话已编辑未保存：条目标 dirty 高亮
+        entry.addClass('dirty');
+
         // Mark the row as modified so the save button shows up
         row.addClass('modified');
         row.find('.preset_card_profile_save_btn').removeClass('hidden');
@@ -756,6 +774,9 @@ export async function openPresetCards(): Promise<void> {
             initial: session?.initial ?? capturePromptFields(prompt),
             edited: { ...(session?.edited ?? {}), ...filterFields(editedFields) },
         });
+
+        // 本会话已编辑未保存：条目标 dirty 高亮
+        entry.addClass('dirty');
 
         // Mark the row as modified so the save button shows up
         row.addClass('modified');

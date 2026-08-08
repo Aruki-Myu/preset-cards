@@ -109,7 +109,7 @@
                             </div>
                             <div class="preset_card_profile_entries">
                                 {{#each this.entries}}
-                                <div class="preset_card_profile_entry {{#if this.hasFields}}has_fields{{/if}}" data-identifier="{{this.identifier}}">
+                                <div class="preset_card_profile_entry {{#if this.hasFields}}has_fields{{/if}} {{#if this.hasPersistentDiff}}persistent{{/if}}" data-identifier="{{this.identifier}}">
                                     <span class="preset_card_profile_entry_name" title="{{this.identifier}}">{{this.name}}</span>
                                     {{#if this.hasFields}}<span class="preset_card_profile_entry_modified" title="{{../../../i18n.hasValueChanges}}"><i class="fa-solid fa-pen-to-square"></i></span>{{/if}}
                                     {{#if this.editable}}

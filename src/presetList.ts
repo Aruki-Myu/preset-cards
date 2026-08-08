@@ -15,6 +15,8 @@ export interface ProfileEntryView {
     name: string;
     enabled: boolean;
     hasFields?: boolean;
+    /** 本 profile 自身存有的持久差异（base 看 prompts[].fields；delta 看自身 changes 的 fields 或 enabled 开关差异）。 */
+    hasPersistentDiff?: boolean;
     /** 是否本 profile 自身存有该条目的值差异（base 看 fields；delta 看自身 changes），可清除。 */
     clearable?: boolean;
     /** 是否允许编辑内容：仅普通 prompt（非 system_prompt / marker）可编辑。 */
@@ -127,6 +129,12 @@ export function buildPresetList(): PresetCardModel[] {
                         name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
                         enabled: e.enabled,
                         hasFields,
+                        // 本 profile 自身存有的持久差异：base 的 prompts[].fields 即自身值变更（hasFields 等价）；
+                        // delta 需自身 changes 里有 fields 或 enabled（开关差异），父链继承的差异不属于本 profile。
+                        hasPersistentDiff: isPromptDeltaProfile(p)
+                            ? p.changes.some((c) => c.identifier === e.identifier
+                                && (c.enabled !== undefined || (c.fields && Object.keys(c.fields).length > 0)))
+                            : hasFields,
                         // base 的 fields 即自身值变更；delta 需自身 changes 里有 fields（父链继承的不可由本 profile 清除）
                         clearable: isPromptDeltaProfile(p)
                             ? p.changes.some((c) => c.identifier === e.identifier && c.fields && Object.keys(c.fields).length > 0)

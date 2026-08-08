@@ -940,6 +940,26 @@
     opacity: 0.7;
 }
 
+/* 持久差异（base 存有 fields / delta 存有 fields 或 enabled 开关差异）：淡琥珀调，inset 阴影代替 border-left 避免挤压布局 */
+.preset_card_profile_entry.persistent {
+    background: rgba(255, 180, 50, 0.10);
+    box-shadow: inset 3px 0 0 rgba(255, 180, 50, 0.7);
+}
+
+.preset_card_profile_entry.persistent:hover {
+    background: rgba(255, 180, 50, 0.16);
+}
+
+/* 本会话已编辑未保存：淡青/蓝调，定义在 persistent 之后故叠加时优先（dirty > persistent） */
+.preset_card_profile_entry.dirty {
+    background: rgba(80, 180, 255, 0.10);
+    box-shadow: inset 3px 0 0 rgba(80, 180, 255, 0.7);
+}
+
+.preset_card_profile_entry.dirty:hover {
+    background: rgba(80, 180, 255, 0.16);
+}
+
 .preset_card_profile_save_btn {
     margin-top: 6px;
     align-self: flex-end;
