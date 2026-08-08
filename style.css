@@ -1113,6 +1113,7 @@
     }
     
     .preset_card_add_profile_btn,
+    .preset_card_import_profile_btn,
     .preset_card_export_all_btn {
         opacity: 1;
     }
