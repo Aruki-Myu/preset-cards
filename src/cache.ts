@@ -3,7 +3,10 @@
 const CACHE_DB_NAME = 'PresetCardsCache';
 const CACHE_STORE_NAME = 'images';
 let cacheDb: IDBDatabase | null = null;
+const COOLDOWN_MS = 5 * 60 * 1000;
+const MAX_RETRIES = 3;
 const URL_CACHE = new Map<string, Promise<string>>();
+const FAILED_URLS = new Map<string, { count: number; lastFailedAt: number }>();
 
 function initCacheDb(): Promise<IDBDatabase | null> {
     return new Promise((resolve) => {
@@ -34,6 +37,13 @@ export function getCachedImageURL(url: string): Promise<string> {
     const cached = URL_CACHE.get(url);
     if (cached) return cached;
 
+    const failed = FAILED_URLS.get(url);
+    if (failed) {
+        const now = Date.now();
+        if (now - failed.lastFailedAt < COOLDOWN_MS) return Promise.resolve(url);
+        if (failed.count >= MAX_RETRIES) return Promise.resolve(url);
+    }
+
     const promise = (async (): Promise<string> => {
         const db = await initCacheDb();
         if (!db) return url;
@@ -52,12 +62,17 @@ export function getCachedImageURL(url: string): Promise<string> {
                         if (!response.ok) throw new Error('Network response was not ok');
                         const blob = await response.blob();
 
+                        FAILED_URLS.delete(url);
+
                         const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
                         writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
 
                         resolve(URL.createObjectURL(blob));
                     } catch (err) {
                         console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
+                        const prev = FAILED_URLS.get(url);
+                        FAILED_URLS.set(url, { count: prev ? prev.count + 1 : 1, lastFailedAt: Date.now() });
+                        URL_CACHE.delete(url);
                         resolve(url);
                     }
                 }
@@ -83,6 +98,7 @@ export function applyCachedBackgrounds(container: JQuery<HTMLElement>): void {
 
 export async function clearImageCache(): Promise<boolean> {
     URL_CACHE.clear();
+    FAILED_URLS.clear();
     const db = await initCacheDb();
     if (!db) return false;
     return new Promise<boolean>((resolve) => {
