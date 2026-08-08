@@ -218,7 +218,8 @@ export async function openPresetCards(): Promise<void> {
 
     // 导出完整分支树 prompt_tree：收集全部 base/delta，按 root→leaf（DFS）排序，
     // 保证每个 delta 的 baseId 祖先在其前，保留原始 id/baseId 以便导入还原。
-    function buildTreeExportData(meta: PresetMeta): string {
+    // targetId 记录用户点击导出时的 profile 原始 id（仅行级导出提供；头部整树导出不提供）。
+    function buildTreeExportData(meta: PresetMeta, targetId?: string): string {
         const profiles = meta.profiles.filter(p => isPromptBaseProfile(p) || isPromptDeltaProfile(p)) as (PromptBaseProfile | PromptDeltaProfile)[];
         const childrenByParent = new Map<string, PromptDeltaProfile[]>();
         for (const p of profiles) {
@@ -250,7 +251,16 @@ export async function openPresetCards(): Promise<void> {
         const exported = ordered.map(p => isPromptBaseProfile(p)
             ? { kind: p.kind, id: p.id, name: p.name, prompts: p.prompts }
             : { kind: p.kind, id: p.id, name: p.name, baseId: p.baseId, changes: p.changes });
-        return JSON.stringify({ kind: 'prompt_tree', formatVersion: 2, profiles: exported }, null, 4);
+        const payload: Record<string, any> = { kind: 'prompt_tree', formatVersion: 2, profiles: exported };
+        if (targetId) payload.targetId = targetId;
+        return JSON.stringify(payload, null, 4);
+    }
+
+    // 防御性提示：v1 快照无父链、不参与整树导出；仅提醒，不改变导出内容
+    function warnV1ExcludedFromTreeExport(meta: PresetMeta): void {
+        if (meta.profiles.some((p) => !isPromptBaseProfile(p) && !isPromptDeltaProfile(p))) {
+            toastr.warning(L('Legacy v1 profiles are not included in the tree export'));
+        }
     }
 
     // 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）
@@ -515,6 +525,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
+        warnV1ExcludedFromTreeExport(meta);
         download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
     });
 
@@ -724,6 +735,7 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
+        warnV1ExcludedFromTreeExport(meta);
         download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
     });
 
@@ -1237,7 +1249,8 @@ export async function openPresetCards(): Promise<void> {
         if (choice === 'tree') {
             // v1 快照无父链可导出，回退为单 profile 导出
             if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
-                download(buildTreeExportData(meta), `${profile.name}-tree.json`, 'application/json');
+                warnV1ExcludedFromTreeExport(meta);
+                download(buildTreeExportData(meta, profile.id), `${profile.name}-tree.json`, 'application/json');
             } else {
                 download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
             }
@@ -1282,17 +1295,20 @@ export async function openPresetCards(): Promise<void> {
                 const newId = freshId();
 
                 if (parsed && parsed.kind === 'prompt_tree' && Array.isArray(parsed.profiles)) {
-                    // 完整分支链导入：oldId → 实际 id 映射，按 root→leaf 顺序重建
+                    // 完整分支链导入：oldId → 实际 id 映射（base 与 delta 都记录，保证嵌套 delta 的 baseId 可解析），按 root→leaf 顺序重建
                     const idMap = new Map<string, string>();
+                    const targetId = typeof parsed.targetId === 'string' ? parsed.targetId : undefined;
                     let unresolved = false;
                     for (const entry of parsed.profiles) {
                         if (!entry) continue;
                         if (entry.kind === 'prompt_base' && Array.isArray(entry.prompts)) {
-                            // 内容完全相同的现有 base 复用；否则新建并保留导出名称
+                            // 内容完全相同的现有 base 复用（含 fields 白名单一致）；否则新建并保留导出名称
                             const existing = profiles.find((b): b is PromptBaseProfile =>
                                 isPromptBaseProfile(b) && b.name === (entry.name || profileName)
                                 && b.prompts.length === entry.prompts.length
-                                && b.prompts.every((e, i) => e.identifier === entry.prompts[i].identifier && e.enabled === entry.prompts[i].enabled));
+                                && b.prompts.every((e, i) => e.identifier === entry.prompts[i].identifier
+                                    && e.enabled === entry.prompts[i].enabled
+                                    && promptFieldsEqual(e.fields ?? {}, entry.prompts[i].fields ?? {})));
                             if (existing) {
                                 if (entry.id !== undefined) idMap.set(String(entry.id), existing.id);
                             } else {
@@ -1307,15 +1323,19 @@ export async function openPresetCards(): Promise<void> {
                                 if (entry.id !== undefined) idMap.set(String(entry.id), baseNewId);
                             }
                         } else if (entry.kind === 'prompt_delta' && Array.isArray(entry.changes)) {
-                            // 目标 profile 用弹窗输入名，祖先 delta 保留导出名
-                            const isTarget = entry === parsed.profiles[parsed.profiles.length - 1];
+                            // 目标 profile（原始 id 匹配 targetId）用弹窗输入名；无 targetId 时回退旧行为（DFS 末元素）；base 不消费弹窗名
+                            const isTarget = targetId !== undefined
+                                ? entry.id !== undefined && String(entry.id) === targetId
+                                : entry === parsed.profiles[parsed.profiles.length - 1];
                             const rawBaseId = typeof entry.baseId === 'string' ? entry.baseId : '';
                             const resolvedBaseId = rawBaseId ? idMap.get(rawBaseId) : undefined;
                             if (rawBaseId && !resolvedBaseId) unresolved = true;
+                            const deltaNewId = freshId();
+                            if (entry.id !== undefined) idMap.set(String(entry.id), deltaNewId);
                             profiles.push({
                                 formatVersion: 2,
                                 kind: 'prompt_delta',
-                                id: freshId(),
+                                id: deltaNewId,
                                 name: isTarget ? profileName : (entry.name || profileName),
                                 baseId: resolvedBaseId || rawBaseId,
                                 changes: entry.changes,
