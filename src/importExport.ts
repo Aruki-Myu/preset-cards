@@ -10,7 +10,7 @@ import {
     type PromptBaseProfile,
     type PromptDeltaProfile,
 } from './meta.js';
-import { promptFieldsEqual, resolveProfileStates } from './promptToggle.js';
+import { promptFieldsEqual, resolveProfilePrompts } from './promptToggle.js';
 
 // Two-button choice popup: update current profile, or create a new subprofile (delta).
 export function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
@@ -67,8 +67,8 @@ export function buildProfileExportData(profile: PresetProfile, meta: PresetMeta)
         }, null, 4);
     }
     if (isPromptDeltaProfile(profile)) {
-        // 导出自包含：附上解析后的完整 parent 状态快照，导入时可完整还原
-        const parentStates = resolveProfileStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+        // 导出自包含：附上解析后的完整 parent 状态快照（含值字段 fields），导入时可完整还原
+        const parentStates = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
         return JSON.stringify({
             kind: profile.kind,
             formatVersion: profile.formatVersion,
@@ -213,12 +213,14 @@ export function mergeImportedProfiles(
     } else if (parsed && parsed.kind === 'prompt_delta' && Array.isArray(parsed.changes)) {
         // 若文件带 base 快照：先复用（内容相同）或新建 main，再挂 delta
         let baseId = '';
-        const importedBase = parsed.base as { name?: string; prompts?: { identifier: string; enabled: boolean }[] } | undefined;
+        const importedBase = parsed.base as { name?: string; prompts?: { identifier: string; enabled: boolean; fields?: Record<string, any> }[] } | undefined;
         if (importedBase && Array.isArray(importedBase.prompts)) {
             const existing = profiles.find((b): b is PromptBaseProfile =>
                 isPromptBaseProfile(b) && b.name === (importedBase.name || profileName)
                 && b.prompts.length === importedBase.prompts!.length
-                && b.prompts.every((e, i) => e.identifier === importedBase.prompts![i].identifier && e.enabled === importedBase.prompts![i].enabled));
+                && b.prompts.every((e, i) => e.identifier === importedBase.prompts![i].identifier
+                    && e.enabled === importedBase.prompts![i].enabled
+                    && promptFieldsEqual(e.fields ?? {}, importedBase.prompts![i].fields ?? {})));
             if (existing) {
                 baseId = existing.id;
             } else {
