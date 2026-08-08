@@ -66,11 +66,21 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
 }
 
 // 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
-export async function openPromptEditPopup(preset: Preset, identifier: string): Promise<PromptFields | null> {
+// current 为「预设原值叠加已缓冲编辑」的有效当前值；缺省时以预设原值为基线预填与比对。
+export async function openPromptEditPopup(
+    preset: Preset,
+    identifier: string,
+    current?: PromptFields,
+): Promise<PromptFields | null> {
     const prompt = findPromptInPreset(preset, identifier);
     if (!prompt) return null;
 
     const isMarker = !!prompt.marker;
+
+    const nameVal = current?.name !== undefined ? current.name : (prompt.name ?? '');
+    const roleVal = current?.role !== undefined ? current.role : (prompt.role ?? 'system');
+    const contentVal = current?.content !== undefined ? current.content : (prompt.content ?? '');
+    const positionVal = current?.injection_position !== undefined ? current.injection_position : (prompt.injection_position ?? 0);
 
     const container = $('<div class="preset_cards_prompt_edit_form"></div>');
     container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
@@ -82,7 +92,7 @@ export async function openPromptEditPopup(preset: Preset, identifier: string): P
 
     const nameWrap = $('<div class="preset_edit_field"></div>');
     nameWrap.append($('<label></label>').text(L('Name')));
-    const nameInput = $('<input type="text">').val(prompt.name ?? '');
+    const nameInput = $('<input type="text">').val(nameVal);
     nameWrap.append(nameInput);
 
     // 位置与角色：两个窄控件并排一行，窄屏自动换行
@@ -93,7 +103,7 @@ export async function openPromptEditPopup(preset: Preset, identifier: string): P
     const roleSelect = $('<select class="text_pole"></select>');
     for (const [value, label] of [['system', L('System')], ['user', L('User')], ['assistant', L('AI Assistant')]] as [string, string][]) {
         const option = $('<option></option>').attr('value', value).text(label);
-        if (value === (prompt.role ?? 'system')) option.attr('selected', 'selected');
+        if (value === roleVal) option.attr('selected', 'selected');
         roleSelect.append(option);
     }
     roleWrap.append(roleSelect);
@@ -104,7 +114,7 @@ export async function openPromptEditPopup(preset: Preset, identifier: string): P
     // 与 ST INJECTION_POSITION 一致（PromptManager.js:37-40）：0=Relative, 1=In-chat
     for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
         const option = $('<option></option>').attr('value', value).text(label);
-        if (value === String(prompt.injection_position ?? 0)) option.attr('selected', 'selected');
+        if (value === String(positionVal)) option.attr('selected', 'selected');
         positionSelect.append(option);
     }
     positionWrap.append(positionSelect);
@@ -114,7 +124,7 @@ export async function openPromptEditPopup(preset: Preset, identifier: string): P
 
     const contentWrap = $('<div class="preset_edit_field"></div>');
     contentWrap.append($('<label></label>').text(L('Content')));
-    const contentInput = $('<textarea></textarea>').val(prompt.content ?? '');
+    const contentInput = $('<textarea></textarea>').val(contentVal);
     if (isMarker) {
         contentInput.prop('disabled', true);
     }
@@ -138,10 +148,10 @@ export async function openPromptEditPopup(preset: Preset, identifier: string): P
     const content = String(contentInput.val() ?? '');
     const position = Number(positionSelect.val() ?? 0);
 
-    if (role !== (prompt.role ?? 'system')) fields.role = role;
-    if (name !== (prompt.name ?? '')) fields.name = name;
-    if (!isMarker && content !== (prompt.content ?? '')) fields.content = content;
-    if (position !== (prompt.injection_position ?? 0)) fields.injection_position = position;
+    if (role !== roleVal) fields.role = role;
+    if (name !== nameVal) fields.name = name;
+    if (!isMarker && content !== contentVal) fields.content = content;
+    if (position !== positionVal) fields.injection_position = position;
 
     return Object.keys(fields).length > 0 ? fields : null;
 }
