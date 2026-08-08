@@ -1,1 +1,1 @@
-export { init, refresh } from './init.js';
+export { init } from './init.js';

@@ -3,8 +3,7 @@ import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { POPUP_TYPE, POPUP_RESULT, callGenericPopup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { AVAILABLE_MODELS, EXTENSION_NAME, LOGO_BASE } from './constants.js';
-import { readMeta, saveMeta, type Preset, type PromptFields } from './meta.js';
-import { findPromptInPreset } from './promptToggle.js';
+import { readMeta, saveMeta, type Preset } from './meta.js';
 import { L } from './i18n.js';
 
 /**
@@ -48,7 +47,6 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
     const result = await callGenericPopup(dialog, POPUP_TYPE.CONFIRM, '', {
         okButton: t`Save`,
         cancelButton: t`Cancel`,
-        allowVerticalScrolling: true,
     });
 
     if (result !== POPUP_RESULT.AFFIRMATIVE) return;
@@ -60,98 +58,7 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
         return $(this).data('model-id') as string;
     }).get();
 
-    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot });
+    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
-}
-
-// 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
-// current 为「预设原值叠加已缓冲编辑」的有效当前值；缺省时以预设原值为基线预填与比对。
-export async function openPromptEditPopup(
-    preset: Preset,
-    identifier: string,
-    current?: PromptFields,
-): Promise<PromptFields | null> {
-    const prompt = findPromptInPreset(preset, identifier);
-    if (!prompt) return null;
-
-    const isMarker = !!prompt.marker;
-
-    const nameVal = current?.name !== undefined ? current.name : (prompt.name ?? '');
-    const roleVal = current?.role !== undefined ? current.role : (prompt.role ?? 'system');
-    const contentVal = current?.content !== undefined ? current.content : (prompt.content ?? '');
-    const positionVal = current?.injection_position !== undefined ? current.injection_position : (prompt.injection_position ?? 0);
-
-    const container = $('<div class="preset_cards_prompt_edit_form"></div>');
-    container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
-
-    if (isMarker) {
-        container.append($('<div class="preset_cards_prompt_edit_marker_notice"></div>')
-            .text(L('This is a marker prompt. Its content is managed by SillyTavern and cannot be edited here.')));
-    }
-
-    const nameWrap = $('<div class="preset_edit_field"></div>');
-    nameWrap.append($('<label></label>').text(L('Name')));
-    const nameInput = $('<input type="text">').val(nameVal);
-    nameWrap.append(nameInput);
-
-    // 位置与角色：两个窄控件并排一行，窄屏自动换行
-    const rowWrap = $('<div class="preset_cards_prompt_edit_row"></div>');
-
-    const roleWrap = $('<div class="preset_edit_field"></div>');
-    roleWrap.append($('<label></label>').text(L('Role')));
-    const roleSelect = $('<select class="text_pole"></select>');
-    for (const [value, label] of [['system', L('System')], ['user', L('User')], ['assistant', L('AI Assistant')]] as [string, string][]) {
-        const option = $('<option></option>').attr('value', value).text(label);
-        if (value === roleVal) option.attr('selected', 'selected');
-        roleSelect.append(option);
-    }
-    roleWrap.append(roleSelect);
-
-    const positionWrap = $('<div class="preset_edit_field"></div>');
-    positionWrap.append($('<label></label>').text(L('Position')));
-    const positionSelect = $('<select class="text_pole"></select>');
-    // 与 ST INJECTION_POSITION 一致（PromptManager.js:37-40）：0=Relative, 1=In-chat
-    for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
-        const option = $('<option></option>').attr('value', value).text(label);
-        if (value === String(positionVal)) option.attr('selected', 'selected');
-        positionSelect.append(option);
-    }
-    positionWrap.append(positionSelect);
-
-    rowWrap.append(roleWrap);
-    rowWrap.append(positionWrap);
-
-    const contentWrap = $('<div class="preset_edit_field"></div>');
-    contentWrap.append($('<label></label>').text(L('Content')));
-    const contentInput = $('<textarea></textarea>').val(contentVal);
-    if (isMarker) {
-        contentInput.prop('disabled', true);
-    }
-    contentWrap.append(contentInput);
-
-    container.append(nameWrap);
-    container.append(rowWrap);
-    container.append(contentWrap);
-
-    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
-        okButton: t`Save`,
-        cancelButton: t`Cancel`,
-        allowVerticalScrolling: true,
-    });
-    if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
-
-    // 只返回与当前值不同的字段，避免把默认值写进 profile
-    const fields: PromptFields = {};
-    const role = String(roleSelect.val() ?? 'system');
-    const name = String(nameInput.val() ?? '');
-    const content = String(contentInput.val() ?? '');
-    const position = Number(positionSelect.val() ?? 0);
-
-    if (role !== roleVal) fields.role = role;
-    if (name !== nameVal) fields.name = name;
-    if (!isMarker && content !== contentVal) fields.content = content;
-    if (position !== positionVal) fields.injection_position = position;
-
-    return Object.keys(fields).length > 0 ? fields : null;
 }
