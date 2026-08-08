@@ -1,6 +1,6 @@
 # Preset Cards for SillyTavern
 
-将 ST 原生的下拉式 Chat Completion 预设管理器重做为可视化卡片网格的第三方扩展，并为每个预设提供**主/派生 profile（Base / Delta）**两级配置快照系统。当前开发分支 `feature/profile-changelist`，提交范围 `93cf85d→6a1a435`。
+将 ST 原生的下拉式 Chat Completion 预设管理器重做为可视化卡片网格的第三方扩展，并为每个预设提供**主/派生 profile（Base / Delta）**两级配置快照系统。当前开发分支 `feature/profile-changelist`，提交范围 `93cf85d→83653f7`。
 
 ## 功能特性
 
@@ -11,8 +11,8 @@
 - **展开条目编辑开关**：点击 profile 展开条目列表，逐条切换 prompt 开关，改动实时写入预设实际值并同步 `prompt_order`。
 - **system_prompt / marker 条目不显示开关与编辑入口**：这些条目的内容由 ST 管理，仅普通 prompt 可切换、可编辑。
 - **点击条目编辑值**：编辑弹窗（`src/editModal.ts` 的 `openPromptEditPopup`）提供 Name、Role + Position（同一行）与全宽 Content 文本域；position 下拉仅 **Relative(0) / In-chat(1)**（与 ST 的 INJECTION_POSITION 一致）；marker 条目的内容框禁用。值差异写入 profile 的 `fields`。
-- **prompt 顺序上移 / 下移**：仅**活动预设**的条目渲染按钮；写入目标策略感知（global→100001 / character→活动角色 id），重排 `prompt_order` 后保存并刷新活动预设；global 策略时显示全局警告，说明顺序作用于所有角色。
-- **导入导出**：profile 导出弹窗三选项——「导出」（自包含旧格式，delta 附解析后的父快照 `Imported Parent`）、「包含关系链的导出」（`prompt_tree` 全链，根→目标，保留 id/baseId）、「取消」；完整预设导出刻意不进该弹窗（用 ST 自带 / 卡片级导出按钮）。导入识别 `prompt_tree`（按 root→leaf 重建、id 映射、内容相同的 base 自动复用、freshId 去重）与旧版 base / delta / v1 格式。
+- **prompt 顺序上移 / 下移**：仅**活动预设**的条目渲染按钮；写入目标策略感知（global→100001 / character→活动角色 id），重排 `prompt_order` 后保存并刷新活动预设。
+- **导入导出**：profile 导出弹窗三选项——「导出」（自包含旧格式，delta 附解析后的父快照 `Imported Parent`）、「包含关系链的导出」（`prompt_tree` 导出该预设**全部** base/delta，DFS 根优先排序保证每个 delta 的 baseId 祖先在其前，保留原始 id/baseId，v1 排除）、「取消」；完整预设导出刻意不进该弹窗（用 ST 自带）。卡片头部导出按钮复用为两选项「导出全部配置文件 / 取消」，确认后下载整棵分支树（`${name}-tree.json`）。导入识别 `prompt_tree`（按 root→leaf 重建、id 映射、内容相同的 base 自动复用、freshId 去重）与旧版 base / delta / v1 格式。
 - **重置**：Delta 回退到上级（Base 或上层 Delta），Base 回退到隐藏的默认基准（`defaultSnapshot`，打开弹窗时自动回填）。
 - **保存二选一**：展开编辑后的保存弹窗让用户选择「更新当前配置」或「新建为子配置（派生）」；delta 更新的差异基线用**父链解析**（`resolveParentStates`），未编辑的已存差异原样保留。
 - **清除值变更**：一键删除该条目的 `fields` 并**完全撤销**——同时还原运行时值、同步活动预设、清除本次会话的编辑记录（`sessionEdits`）。
@@ -65,8 +65,11 @@ npm run build      # 生产构建，输出 dist/index.js（sourcemap 已禁用�
 
 源码入口为 `src/index.ts`（重导出 `src/init.ts` 的 `init` 钩子），核心逻辑见 `src/presetCards.ts`、`src/presetList.ts`、`src/meta.ts`、`src/promptToggle.ts`，编辑弹窗见 `src/editModal.ts`，中英词典见 `src/constants.ts`。`docs/` 目录有意加入 `.gitignore`，设计文档不随仓库跟踪。
 
-## 最近变更（分支 `feature/profile-changelist`，93cf85d→6a1a435）
+## 最近变更（分支 `feature/profile-changelist`，93cf85d→83653f7）
 
+- **全树导出**：「包含关系链的导出」改为经 `buildTreeExportData` 导出该预设**全部** base/delta（整棵分支树），DFS 根优先排序、每个 delta 的 baseId 祖先在前，保留原始 id/baseId，v1 快照排除在树外。
+- **卡片头部导出按钮复用**：卡片右上角导出按钮不再导出完整预设，改为「导出全部配置文件 / 取消」两选项，确认后下载整树（`${name}-tree.json`）；原 `exportPresetFile` 已删除，完整预设导出留给 ST 自带 UI。
+- **移除全局顺序警告**：删除「当前为全局顺序…」横幅（cards.html 块、`promptOrderGlobal` 字段与 i18n 键、词典键、样式全部移除）；顺序上移/下移功能本身不变。
 - profile 导出改为三选项弹窗，新增 `prompt_tree` 全链导出/导入（idMap 重建、base 内容复用、freshId 去重）。
 - delta「更新当前配置」的保存基线改父链解析（`resolveParentStates`），未编辑的已存差异不再丢失。
 - 「清除值变更」升级为完全撤销（含本次会话编辑记录与运行时值回滚）。
