@@ -1245,6 +1245,8 @@ export async function openPresetCards(): Promise<void> {
     });
 
     // ---- Profiles: Delete Configuration ----
+    // 级联删除：删除 profile 时，递归收集所有派生后代（delta 的 delta……），一并删除。
+    // 弹窗确认时列出将被删除的全部子 node 名称（多行、含嵌套），确认后整棵子树移除。
     dialog.on('click', '.preset_card_profile_delete', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
@@ -1256,22 +1258,47 @@ export async function openPresetCards(): Promise<void> {
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
         const profile = getProfile(meta, profileId);
+        if (!profile) return;
+
+        // 递归收集所有派生后代（含多层 delta 链）：id → 其后代 id 列表
+        // visited 防环：损坏/导入成环数据（delta baseId 指回自身或互相引用）时不致死循环。
+        function collectDescendantIds(rootId: string): string[] {
+            const result: string[] = [];
+            const visited = new Set<string>();
+            const queue = [String(rootId)];
+            while (queue.length > 0) {
+                const current = queue.shift() as string;
+                if (visited.has(current)) continue;
+                visited.add(current);
+                for (const p of meta.profiles) {
+                    if (isPromptDeltaProfile(p) && String(p.baseId) === current) {
+                        result.push(String(p.id));
+                        queue.push(String(p.id));
+                    }
+                }
+            }
+            return result;
+        }
+
+        const descendantIds = collectDescendantIds(profileId);
 
         let confirmText = L('Delete this configuration?');
-        if (profile && isPromptBaseProfile(profile)) {
-            const dependents = meta.profiles.filter(p => isPromptDeltaProfile(p) && p.baseId === profile.id);
-            if (dependents.length > 0) {
-                confirmText += `\n${dependents.length} ${L('derived configuration(s) depend on this base and will only keep their changes after deletion')}`;
-            }
+        if (descendantIds.length > 0) {
+            const names = descendantIds
+                .map((id) => getProfile(meta, id)?.name || id)
+                .join(', ');
+            confirmText += `\n${L('This will also delete the following derived configurations')}: ${names}`;
         }
 
         const confirm = await callGenericPopup(confirmText, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
-        meta.profiles = (meta.profiles || []).filter(p => p.id !== String(profileId));
+        const deleteIds = new Set([String(profileId), ...descendantIds]);
+        meta.profiles = (meta.profiles || []).filter(p => !deleteIds.has(String(p.id)));
         await saveMeta(name, idx, meta);
 
-        row.remove();
+        // 整棵子树可能跨多行，重建网格而非仅删当前行
+        await refreshGrid();
     });
 
     // ---- Profiles: Export Configuration ----

@@ -117,7 +117,7 @@ export const LOCAL_DICT: Record<string, string> = {
     'Base profile not found for this imported derived configuration': '导入的派生配置未找到对应的主 profile',
     'Legacy v1 profiles are not included in the tree export': '旧版 v1 配置快照不包含在关系链导出中',
     'Missing prompts skipped': '缺失的 prompt 已跳过',
-    'derived configuration(s) depend on this base and will only keep their changes after deletion': '个派生配置依赖此主配置，删除后将仅保留各自差异',
+    'This will also delete the following derived configurations': '将一并删除以下派生配置',
 };
 
 export interface ModelDef {
