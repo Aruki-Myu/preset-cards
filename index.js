@@ -82,17 +82,17 @@ const LOCAL_DICT = {
 // ─────────────────────────────────────────
 // Snapshot Modules Config
 // ─────────────────────────────────────────
-const SNAPSHOT_PROMPT_KEYS = [
+const SNAPSHOT_PROMPT_KEYS = new Set([
     'prompts', 'sysPrompt', 'userPrompt', 'jailbreak', 'impersonation_prompt', 'bias_string'
-];
-const SNAPSHOT_IGNORED_KEYS = [
+]);
+const SNAPSHOT_IGNORED_KEYS = new Set([
     'name', 'extensions', 'openai_model', 'claude_model', 'openrouter_model',
     'ai21_model', 'google_model', 'vertexai_model', 'mistralai_model', 'custom_model',
     'cohere_model', 'perplexity_model', 'groq_model', 'chutes_model', 'deepseek_model',
     'aimlapi_model', 'xai_model', 'pollinations_model', 'moonshot_model', 'fireworks_model',
     'cometapi_model', 'azure_openai_model', 'zai_model', 'siliconflow_model', 'workers_ai_model',
     'minimax_model'
-];
+]);
 
 // ─────────────────────────────────────────
 // Caching / IndexedDB
@@ -197,12 +197,10 @@ async function clearImageCache() {
     });
 }
 
+let _cachedLang = null;
 function L(text) {
-    const lang = localStorage.getItem('language') || 'en';
-    if (lang.startsWith('zh') && LOCAL_DICT[text]) {
-        return LOCAL_DICT[text];
-    }
-    return text;
+    if (_cachedLang === null) _cachedLang = localStorage.getItem('language') || 'en';
+    return (_cachedLang.startsWith('zh') && LOCAL_DICT[text]) ? LOCAL_DICT[text] : text;
 }
 
 // ─────────────────────────────────────────
@@ -214,58 +212,66 @@ function generateHex(bytes) {
     return Array.from(arr).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
-function arrayBufferToBase64(buffer) {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-        binary += String.fromCharCode(bytes[i]);
+function hexToBytes(hex) {
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < bytes.length; i++) {
+        bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
     }
-    return btoa(binary);
+    return bytes;
+}
+
+function arrayBufferToBase64(buffer) {
+    const bytes = new Uint8Array(buffer);
+    const chunks = [];
+    for (let i = 0; i < bytes.length; i += 8192) {
+        chunks.push(String.fromCharCode.apply(null, bytes.subarray(i, i + 8192)));
+    }
+    return btoa(chunks.join(''));
 }
 
 function base64ToArrayBuffer(base64) {
-    const binary_string = window.atob(base64);
-    const len = binary_string.length;
-    const bytes = new Uint8Array(len);
-    for (let i = 0; i < len; i++) {
-        bytes[i] = binary_string.charCodeAt(i);
-    }
+    const bin = atob(base64);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
     return bytes.buffer;
 }
 
+function readFileAsText(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => resolve(e.target.result);
+        reader.onerror = reject;
+        reader.readAsText(file);
+    });
+}
+
+function promptFileSelect(accept) {
+    return new Promise(resolve => {
+        const input = $(`<input type="file" accept="${accept}" style="display:none;">`);
+        input.on('change', e => resolve(e.target.files[0]));
+        input.trigger('click');
+    });
+}
+
+const _enc = new TextEncoder();
+const _dec = new TextDecoder();
+
 async function encryptDataGCM(dataStr, hexKey, hexIv, aadStr) {
-    const enc = new TextEncoder();
-    const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    const ivBytes = new Uint8Array(hexIv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-
-    const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['encrypt']);
-
-    const encryptedBuffer = await crypto.subtle.encrypt(
-        { name: 'AES-GCM', iv: ivBytes, additionalData: enc.encode(aadStr), tagLength: 128 },
-        cryptoKey,
-        enc.encode(dataStr)
+    const cryptoKey = await crypto.subtle.importKey('raw', hexToBytes(hexKey), { name: 'AES-GCM' }, false, ['encrypt']);
+    const encrypted = await crypto.subtle.encrypt(
+        { name: 'AES-GCM', iv: hexToBytes(hexIv), additionalData: _enc.encode(aadStr), tagLength: 128 },
+        cryptoKey, _enc.encode(dataStr)
     );
-
-    return arrayBufferToBase64(encryptedBuffer);
+    return arrayBufferToBase64(encrypted);
 }
 
 async function decryptDataGCM(base64Ciphertext, hexKey, hexIv, aadStr) {
-    const enc = new TextEncoder();
-    const keyBytes = new Uint8Array(hexKey.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    const ivBytes = new Uint8Array(hexIv.match(/.{1,2}/g).map(byte => parseInt(byte, 16)));
-    const encryptedBuffer = base64ToArrayBuffer(base64Ciphertext);
-
-    const cryptoKey = await crypto.subtle.importKey('raw', keyBytes, { name: 'AES-GCM' }, false, ['decrypt']);
-
-    const decryptedBuffer = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv: ivBytes, additionalData: enc.encode(aadStr), tagLength: 128 },
-        cryptoKey,
-        encryptedBuffer
+    const cryptoKey = await crypto.subtle.importKey('raw', hexToBytes(hexKey), { name: 'AES-GCM' }, false, ['decrypt']);
+    const decrypted = await crypto.subtle.decrypt(
+        { name: 'AES-GCM', iv: hexToBytes(hexIv), additionalData: _enc.encode(aadStr), tagLength: 128 },
+        cryptoKey, base64ToArrayBuffer(base64Ciphertext)
     );
-
-    const dec = new TextDecoder();
-    return dec.decode(decryptedBuffer);
+    return _dec.decode(decrypted);
 }
 
 /**
@@ -459,8 +465,6 @@ function buildPresetList() {
         // Read custom metadata
         const meta = readMeta(preset);
 
-        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-
         // Build model chips from metadata
         const modelChips = meta.models.map(mid => {
             const def = AVAILABLE_MODELS_MAP.get(mid);
@@ -482,7 +486,7 @@ function buildPresetList() {
             description: meta.description,
             bgImage: meta.bgImage,
             modelChips,
-            profiles,
+            profiles: meta.profiles,
         });
     }
 
@@ -578,6 +582,26 @@ async function openEditModal(presetName, presetIndex, onSaved) {
     await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
+}
+
+// ─────────────────────────────────────────
+// Sensitive field stripping (used by export)
+// ─────────────────────────────────────────
+
+const SENSITIVE_FIELDS = [
+    'reverse_proxy', 'proxy_password', 'custom_url',
+    'custom_include_body', 'custom_exclude_body', 'custom_include_headers',
+    'vertexai_region', 'vertexai_express_project_id',
+    'azure_base_url', 'azure_deployment_name', 'workers_ai_account_id',
+];
+
+function stripSensitiveFields(preset) {
+    for (const field of SENSITIVE_FIELDS) delete preset[field];
+    if (settingsToUpdate) {
+        for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
+            if (isConnection) delete preset[settingName];
+        }
+    }
 }
 
 // ─────────────────────────────────────────
@@ -801,7 +825,7 @@ async function openPresetCards() {
                     }
                 }
                 for (const mid of meta.models) {
-                    const def = AVAILABLE_MODELS.find(m => m.id === mid);
+                    const def = AVAILABLE_MODELS_MAP.get(mid);
                     const logoHtml = def ? `<img src="${LOGO_BASE + def.logo}" alt="" />` : '';
                     const label = def ? def.label : mid;
                     card.find('.preset_card_tags').append(
@@ -833,30 +857,7 @@ async function openPresetCards() {
         const preset = structuredClone(openai_settings[idx]);
 
         // Remove sensitive fields
-        const sensitiveFields = [
-            'reverse_proxy',
-            'proxy_password',
-            'custom_url',
-            'custom_include_body',
-            'custom_exclude_body',
-            'custom_include_headers',
-            'vertexai_region',
-            'vertexai_express_project_id',
-            'azure_base_url',
-            'azure_deployment_name',
-            'workers_ai_account_id',
-        ];
-
-        sensitiveFields.forEach(field => delete preset[field]);
-
-        // Remove connection data
-        if (settingsToUpdate) {
-            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
-                if (isConnection) {
-                    delete preset[settingName];
-                }
-            }
-        }
+        stripSensitiveFields(preset);
 
         const dataStr = JSON.stringify(preset, null, 4);
 
@@ -883,23 +884,11 @@ async function openPresetCards() {
                 generateNew = false;
                 toastr.info(L('Please select the .pckey file to encrypt this preset:'));
 
-                const pckeyFile = await new Promise(resolve => {
-                    const pckeyInput = $('<input type="file" accept=".pckey" style="display:none;">');
-                    pckeyInput.on('change', ev2 => resolve(ev2.target.files[0]));
-                    pckeyInput.click();
-                });
-
+                const pckeyFile = await promptFileSelect('.pckey');
                 if (!pckeyFile) return;
 
                 try {
-                    const pckeyStr = await new Promise((resolve, reject) => {
-                        const reader = new FileReader();
-                        reader.onload = ev => resolve(ev.target.result);
-                        reader.onerror = err => reject(err);
-                        reader.readAsText(pckeyFile);
-                    });
-
-                    const keyArr = JSON.parse(atob(pckeyStr));
+                    const keyArr = JSON.parse(atob(await readFileAsText(pckeyFile)));
                     hexKey = keyArr[0];
                     hexIv = keyArr[1];
                 } catch (e) {
@@ -1138,9 +1127,9 @@ async function openPresetCards() {
         // Snapshot the current preset settings based on selected modules
         const snapshot = {};
         for (const key of Object.keys(preset)) {
-            if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
+            if (SNAPSHOT_IGNORED_KEYS.has(key)) continue;
 
-            const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
+            const isPromptKey = SNAPSHOT_PROMPT_KEYS.has(key);
             if (isPromptKey && savePrompt) {
                 snapshot[key] = structuredClone(preset[key]);
             } else if (!isPromptKey && saveGen) {
@@ -1234,9 +1223,9 @@ async function openPresetCards() {
         // Snapshot the current preset settings based on selected modules
         const snapshot = {};
         for (const key of Object.keys(preset)) {
-            if (SNAPSHOT_IGNORED_KEYS.includes(key)) continue;
+            if (SNAPSHOT_IGNORED_KEYS.has(key)) continue;
 
-            const isPromptKey = SNAPSHOT_PROMPT_KEYS.includes(key);
+            const isPromptKey = SNAPSHOT_PROMPT_KEYS.has(key);
             if (isPromptKey && savePrompt) {
                 snapshot[key] = structuredClone(preset[key]);
             } else if (!isPromptKey && saveGen) {
@@ -1395,85 +1384,50 @@ async function openPresetCards() {
         );
 
         if (importType === POPUP_RESULT.AFFIRMATIVE) {
-            let $customInput = $('#preset_cards_custom_import_myu');
-            if ($customInput.length === 0) {
-                $customInput = $('<input type="file" id="preset_cards_custom_import_myu" accept=".myu" style="display:none;">');
-                $('body').append($customInput);
+            try {
+                const myuFile = await promptFileSelect('.myu');
+                if (!myuFile) return;
 
-                $customInput.on('change', async function (e) {
-                    const file = e.target.files[0];
-                    if (!file) return;
-                    $customInput.val(''); // reset
+                const ciphertext = (await readFileAsText(myuFile)).trim();
+                if (!ciphertext) throw new Error('Empty .myu file');
 
-                    const reader = new FileReader();
-                    reader.onload = async (ev) => {
-                        try {
-                            const ciphertext = ev.target.result.trim();
-                            if (!ciphertext) throw new Error("Empty .myu file");
+                toastr.info(L('Please select the .pckey file to decrypt this preset:'));
+                const pckeyFile = await promptFileSelect('.pckey');
+                if (!pckeyFile) return;
 
-                            toastr.info(L('Please select the .pckey file to decrypt this preset:'));
+                const keyArr = JSON.parse(atob(await readFileAsText(pckeyFile)));
+                const [hexKey, hexIv] = keyArr;
 
-                            const pckeyFile = await new Promise(resolve => {
-                                const pckeyInput = $('<input type="file" accept=".pckey" style="display:none;">');
-                                pckeyInput.on('change', ev2 => resolve(ev2.target.files[0]));
-                                pckeyInput.click();
-                            });
-                            if (!pckeyFile) return;
+                const aadStr = await Popup.show.input(L('Enter AAD (Additional Authenticated Data) for decryption:'), '');
+                if (aadStr === null) return;
 
-                            const pckeyReader = new FileReader();
-                            pckeyReader.onload = async (ev3) => {
-                                try {
-                                    const pckeyStr = ev3.target.result;
-                                    const keyArr = JSON.parse(atob(pckeyStr));
-                                    const hexKey = keyArr[0];
-                                    const hexIv = keyArr[1];
+                const importedPreset = JSON.parse(await decryptDataGCM(ciphertext, hexKey, hexIv, aadStr));
 
-                                    const aadStr = await Popup.show.input(L('Enter AAD (Additional Authenticated Data) for decryption:'), '');
-                                    if (aadStr === null) return;
+                const existingNames = new Set(Object.keys(openai_setting_names));
+                let newName = myuFile.name.replace('.myu', '');
+                let checkName = newName;
+                let counter = 1;
+                while (existingNames.has(checkName)) {
+                    checkName = `${newName} (${counter++})`;
+                }
+                importedPreset.name = checkName;
 
-                                    const decryptedJsonStr = await decryptDataGCM(ciphertext, hexKey, hexIv, aadStr);
-                                    const importedPreset = JSON.parse(decryptedJsonStr);
-
-                                    let newName = file.name.replace('.myu', '');
-                                    let counter = 1;
-                                    let checkName = newName;
-                                    while (Object.keys(openai_setting_names).includes(checkName)) {
-                                        checkName = `${newName} (${counter})`;
-                                        counter++;
-                                    }
-
-                                    importedPreset.name = checkName;
-
-                                    const response = await fetch('/api/presets/save', {
-                                        method: 'POST',
-                                        headers: getRequestHeaders(),
-                                        body: JSON.stringify({
-                                            apiId: 'openai',
-                                            name: checkName,
-                                            preset: importedPreset,
-                                        }),
-                                    });
-
-                                    if (!response.ok) throw new Error("Server save failed");
-
-                                    toastr.success(L('Decrypted and imported successfully'));
-                                    setTimeout(() => location.reload(), 1500);
-                                } catch (decErr) {
-                                    console.error(decErr);
-                                    toastr.error(L('Decryption failed. Check your AAD and key.'));
-                                }
-                            };
-                            pckeyReader.readAsText(pckeyFile);
-
-                        } catch (err) {
-                            console.error(err);
-                            toastr.error(L('Invalid .myu file'));
-                        }
-                    };
-                    reader.readAsText(file);
+                const response = await fetch('/api/presets/save', {
+                    method: 'POST',
+                    headers: getRequestHeaders(),
+                    body: JSON.stringify({ apiId: 'openai', name: checkName, preset: importedPreset }),
                 });
+                if (!response.ok) throw new Error('Server save failed');
+
+                toastr.success(L('Decrypted and imported successfully'));
+                setTimeout(() => location.reload(), 1500);
+            } catch (err) {
+                console.error(err);
+                const msg = err.name === 'OperationError'
+                    ? L('Decryption failed. Check your AAD and key.')
+                    : L('Invalid .myu file');
+                toastr.error(msg);
             }
-            $customInput.trigger('click');
         } else if (importType === POPUP_RESULT.NEGATIVE) {
             $('#openai_preset_import_file').trigger('click');
             dialog.closest('.popup').find('.popup-controls .menu_button').click();

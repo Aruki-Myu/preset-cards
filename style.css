@@ -65,7 +65,8 @@
 #preset_cards_import_btn,
 #preset_cards_multiselect_btn,
 #preset_cards_concise_btn,
-#preset_cards_clear_cache_btn {
+#preset_cards_clear_cache_btn,
+#preset_cards_batch_delete_btn {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -101,20 +102,7 @@
 }
 
 #preset_cards_batch_delete_btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 30px;
-    height: 30px;
-    border-radius: 8px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    background: var(--SmartThemeBlurTintColor);
     color: #f44336;
-    opacity: 0.8;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    padding: 0;
-    font-size: 13px;
 }
 
 #preset_cards_batch_delete_btn:hover {
