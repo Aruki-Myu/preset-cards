@@ -1358,7 +1358,7 @@ export async function openPresetCards(): Promise<void> {
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
                 const existing = Array.isArray(meta.profiles) ? meta.profiles : [];
-                const { profiles, warnings } = mergeImportedProfiles(parsed, existing, profileName);
+                const { profiles, warnings } = mergeImportedProfiles(parsed, existing, profileName, meta.defaultSnapshot);
                 for (const warning of warnings) {
                     toastr.warning(warning);
                 }
