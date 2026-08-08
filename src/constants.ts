@@ -129,6 +129,7 @@ export interface ModelDef {
 export const AVAILABLE_MODELS: ModelDef[] = [
     { id: 'claude',   label: 'Claude',   logo: 'claude-color.png'   },
     { id: 'gemini',   label: 'Gemini',   logo: 'gemini-color.png'   },
+    { id: 'chatgpt',  label: 'ChatGPT',  logo: 'chatgpt.png'        },
     { id: 'deepseek', label: 'DeepSeek', logo: 'deepseek-color.png' },
     { id: 'chatglm',  label: 'ChatGLM',  logo: 'chatglm-color.png'  },
     { id: 'grok',     label: 'Grok',     logo: 'grok.png'           },
