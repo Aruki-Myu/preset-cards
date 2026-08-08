@@ -36,6 +36,7 @@ import {
     resolveParentStates,
     resolveProfilePrompts,
     reorderPromptOrder,
+    runtimeEnabledFor,
     snapshotToChanges,
 } from './promptToggle.js';
 import {
@@ -154,6 +155,29 @@ export async function openPresetCards(): Promise<void> {
                 entry.addClass('dirty');
             }
         });
+    }
+
+    // 该行是否仍有未保存的净变化缓冲条目（toggle 目标或值编辑，net-zero 键已在 handler 中删除）。
+    function rowHasBufferedChanges(row: JQuery<HTMLElement>): boolean {
+        const name = row.closest('.preset_card').attr('data-preset-name') as string;
+        return row.find('.preset_card_profile_entry').toArray().some((el) => {
+            const key = bufferKey(name, String($(el).data('identifier')));
+            if (pendingToggles.has(key)) return true;
+            const session = sessionEdits.get(key);
+            return !!session && !promptFieldsEqual(session.edited, session.initial);
+        });
+    }
+
+    // toggle/edit 后统一刷新行的 modified 标记与保存按钮显隐（无净变化缓冲则收起）。
+    // 注意：clear 不在此列——clear 直接删 profile 持久 fields，本身就是待保存改动，需保留保存按钮。
+    function syncRowModified(row: JQuery<HTMLElement>): void {
+        if (rowHasBufferedChanges(row)) {
+            row.addClass('modified');
+            row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        } else {
+            row.removeClass('modified');
+            row.find('.preset_card_profile_save_btn').addClass('hidden');
+        }
     }
 
     // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
@@ -346,6 +370,9 @@ export async function openPresetCards(): Promise<void> {
 
         // Ignore if clicking action buttons
         if ($(e.target as Element).closest('.preset_card_actions').length) return;
+
+        // Ignore if clicking inside the profiles section (entries, names, blank row space)
+        if ($(e.target as Element).closest('.preset_card_profiles_section').length) return;
 
         const name = $(this).attr('data-preset-name') as string;
 
@@ -737,14 +764,29 @@ export async function openPresetCards(): Promise<void> {
         const row = toggle.closest('.preset_card_profile_row');
         const entry = toggle.closest('.preset_card_profile_entry');
         const identifier = String(entry.data('identifier'));
-        pendingToggles.set(bufferKey(name, identifier), !on);
+        const key = bufferKey(name, identifier);
+        const target = !on;
 
-        // 本会话已编辑未保存：条目标 dirty 高亮
-        entry.addClass('dirty');
+        // 目标值等于该条当前真实 enabled（prompt_order/prompts，应用缓冲前的值）即改回原值（无净变化）：
+        // 取消缓冲；否则记录本次目标。
+        const idx = card.data('preset-index') as number;
+        const preset = openai_settings[idx] as Preset;
+        const prompt = findPromptInPreset(preset, identifier);
+        if (prompt && runtimeEnabledFor(prompt, preset) === target) {
+            pendingToggles.delete(key);
+        } else {
+            pendingToggles.set(key, target);
+        }
 
-        // Mark the row as modified so the save button shows up
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // dirty = 该条仍存在任一未保存的净变化缓冲（与 applyDirtyHighlights 判定一致）
+        if (!pendingToggles.has(key) && !sessionEdits.has(key)) {
+            entry.removeClass('dirty');
+        } else {
+            entry.addClass('dirty');
+        }
+
+        // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
+        syncRowModified(row);
     });
 
     // ---- Profiles: Edit entry value fields (opens the prompt edit popup) ----
@@ -770,24 +812,32 @@ export async function openPresetCards(): Promise<void> {
         if (!editedFields) return;
 
         // 累积式记录本次编辑：保存时统一应用；多次编辑保留第一次的初始值（reset 还原到首次编辑前）
-        const session = sessionEdits.get(bufferKey(name, identifier));
-        sessionEdits.set(bufferKey(name, identifier), {
-            initial: session?.initial ?? capturePromptFields(prompt),
-            edited: { ...(session?.edited ?? {}), ...filterFields(editedFields) },
-        });
+        const key = bufferKey(name, identifier);
+        const session = sessionEdits.get(key);
+        const initial = session?.initial ?? capturePromptFields(prompt);
+        const edited = { ...(session?.edited ?? {}), ...filterFields(editedFields) };
 
-        // 本会话已编辑未保存：条目标 dirty 高亮
-        entry.addClass('dirty');
+        // 改回原值（edited 与 initial 净相等）即无净变化 → 取消缓冲；否则保留。
+        if (promptFieldsEqual(edited, initial)) {
+            sessionEdits.delete(key);
+        } else {
+            sessionEdits.set(key, { initial, edited });
+        }
 
-        // Mark the row as modified so the save button shows up
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // dirty = 该条仍存在任一未保存的净变化缓冲（与 applyDirtyHighlights 判定一致）
+        if (!pendingToggles.has(key) && !sessionEdits.has(key)) {
+            entry.removeClass('dirty');
+        } else {
+            entry.addClass('dirty');
+        }
+
+        // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
+        syncRowModified(row);
 
         // 仅 UI：本地刷新条目名（值已缓冲，保存时才写入 preset 与运行态）
         const nameEl = entry.find('.preset_card_profile_entry_name');
-        const targetName = sessionEdits.get(bufferKey(name, identifier))?.edited.name;
-        if (nameEl.length && typeof targetName === 'string') {
-            nameEl.text(targetName).attr('title', identifier);
+        if (nameEl.length && typeof edited.name === 'string') {
+            nameEl.text(edited.name).attr('title', identifier);
         }
     });
 
