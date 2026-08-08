@@ -1,4 +1,4 @@
-import { getRequestHeaders } from '/script.js';
+import { getRequestHeaders, saveSettingsDebounced } from '/script.js';
 import { renderExtensionTemplateAsync } from '/scripts/extensions.js';
 import {
     oai_settings,
@@ -12,6 +12,7 @@ import { SlashCommandParser } from '/scripts/slash-commands/SlashCommandParser.j
 import { t } from '/scripts/i18n.js';
 import { download } from '/scripts/utils.js';
 import { settingsToUpdate } from '/scripts/openai.js';
+import { eventSource, event_types } from '/scripts/events.js';
 
 // ─────────────────────────────────────────
 // Constants
@@ -410,24 +411,171 @@ async function saveMeta(presetName, presetIndex, meta) {
         oai_settings.extensions[EXTENSION_KEY] = preset.extensions[EXTENSION_KEY];
     }
 
-    // Build the preset body from the actual preset object (not from oai_settings,
-    // which reflects the *currently active* preset — possibly a different one).
-    const presetBody = structuredClone(preset);
+    // Serialize directly — avoids structuredClone + JSON.stringify double work
+    const bodyStr = JSON.stringify({
+        apiId: 'openai',
+        name: presetName,
+        preset: preset,
+    });
 
     const response = await fetch('/api/presets/save', {
         method: 'POST',
         headers: getRequestHeaders(),
-        body: JSON.stringify({
-            apiId: 'openai',
-            name: presetName,
-            preset: presetBody,
-        }),
+        body: bodyStr,
     });
 
     if (!response.ok) {
         toastr.error(t`Failed to save preset metadata`);
         console.error('Failed to save preset metadata', response);
     }
+}
+
+// Per-preset debounced save — collapses rapid consecutive saves into one
+const _saveMetaTimers = new Map();
+function debouncedSaveMeta(presetName, presetIndex, meta, delay = 300) {
+    return new Promise((resolve) => {
+        if (_saveMetaTimers.has(presetName)) clearTimeout(_saveMetaTimers.get(presetName));
+        _saveMetaTimers.set(presetName, setTimeout(async () => {
+            _saveMetaTimers.delete(presetName);
+            await saveMeta(presetName, presetIndex, meta);
+            resolve();
+        }, delay));
+    });
+}
+
+/**
+ * Wait for the native ST preset save to complete after triggering #update_oai_preset.
+ * Uses a short polling approach instead of a blind 800ms wait.
+ * Resolves as soon as fetch to /api/presets/save completes, or after 200ms max.
+ */
+function waitForPresetSave() {
+    return new Promise((resolve) => {
+        let resolved = false;
+        const done = () => { if (!resolved) { resolved = true; resolve(); } };
+
+        // Fallback timeout — never wait longer than 200ms
+        const timer = setTimeout(done, 200);
+
+        // Listen for the next fetch completion to the save endpoint
+        const origFetch = window.fetch;
+        window.fetch = function (...args) {
+            const result = origFetch.apply(this, args);
+            const url = typeof args[0] === 'string' ? args[0] : args[0]?.url || '';
+            if (url.includes('/api/presets/save')) {
+                result.then(() => {
+                    clearTimeout(timer);
+                    // Restore immediately, tiny delay for ST to process response
+                    setTimeout(done, 30);
+                }).catch(() => { clearTimeout(timer); done(); });
+                window.fetch = origFetch; // Restore after first intercept
+            }
+            return result;
+        };
+    });
+}
+
+/**
+ * Build a single profile row HTML and append it to a card's profiles list.
+ * Avoids full grid re-render when adding/importing a profile.
+ */
+function appendProfileRow(card, profile, i18n) {
+    const list = card.find('.preset_card_profiles_list');
+    const row = $(`<div class="preset_card_profile_row" data-profile-id="${profile.id}">
+        <div class="preset_card_profile_name" title="${i18n?.loadConfig || 'Load configuration'}">${profile.name}</div>
+        <div class="preset_card_profile_actions">
+            <i class="fa-solid fa-file-export preset_card_profile_export" title="${i18n?.exportConfig || 'Export configuration'}"></i>
+            <i class="fa-solid fa-floppy-disk preset_card_profile_update" title="${i18n?.overwriteConfig || 'Overwrite with current settings'}"></i>
+            <i class="fa-solid fa-pencil preset_card_profile_edit" title="${i18n?.rename || 'Rename'}"></i>
+            <i class="fa-solid fa-trash-can preset_card_profile_delete" title="${i18n?.delete || 'Delete'}"></i>
+        </div>
+    </div>`);
+    list.append(row);
+}
+
+/**
+ * Fast preset apply — bypasses ST's native per-element DOM trigger loop.
+ *
+ * ST's onSettingsPresetChange() does ~100 individual $(selector).val(value).trigger('input')
+ * calls, each causing synchronous reflow. This function instead:
+ * 1. Writes directly to oai_settings (memory-only)
+ * 2. Batch-updates all DOM elements in a single requestAnimationFrame
+ * 3. Only triggers essential global events (save, PromptManager refresh)
+ *
+ * Falls back to native path when bind_preset_to_connection is on (needs full UI trigger chain).
+ *
+ * @param {number} presetIndex  Index into openai_settings[]
+ * @param {string} presetName   Human-readable preset name
+ */
+async function fastApplyPreset(presetIndex, presetName) {
+    const preset = openai_settings[presetIndex];
+    if (!preset) return;
+
+    // Connection-bound presets need full native flow (source switching, model list rebuilds)
+    if (oai_settings.bind_preset_to_connection) {
+        $('#settings_preset_openai').val(presetIndex).trigger('change');
+        return;
+    }
+
+    const presetNameBefore = oai_settings.preset_settings_openai;
+    oai_settings.preset_settings_openai = presetName;
+
+    // ── Phase 1: Emit BEFORE event for PromptManager migration ──
+    // We pass the preset directly (no structuredClone — we only read, never mutate)
+    await eventSource.emit(event_types.OAI_PRESET_CHANGED_BEFORE, {
+        preset: preset,
+        presetName: presetName,
+        settingsToUpdate: settingsToUpdate,
+        settings: oai_settings,
+        savePreset: null, // migration-only, save handled separately
+        presetNameBefore: presetNameBefore,
+    });
+
+    // ── Phase 2: Direct memory write — skip 100× jQuery .val().trigger() ──
+    for (const [key, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
+        if (isConnection) continue; // connection fields skipped (bind_preset_to_connection is off)
+        if (key === 'extensions') {
+            oai_settings.extensions = preset.extensions || {};
+            continue;
+        }
+        if (preset[key] !== undefined) {
+            oai_settings[settingName] = preset[key];
+        }
+    }
+
+    // ── Phase 3: Batch DOM update in single animation frame ──
+    requestAnimationFrame(() => {
+        for (const [key, [selector, , isCheckbox]] of Object.entries(settingsToUpdate)) {
+            if (!selector || selector === '' || selector === '#NULL_SELECTOR') continue;
+            if (preset[key] === undefined) continue;
+
+            const el = document.querySelector(selector);
+            if (!el) continue;
+
+            if (isCheckbox) {
+                el.checked = !!preset[key];
+            } else {
+                el.value = preset[key];
+            }
+
+            // Sync range slider numeric counters (no event trigger needed)
+            if (el.type === 'range' && el.id) {
+                const counter = document.querySelector(`input[type="number"][data-for="${el.id}"]`);
+                if (counter) counter.value = Number(preset[key]);
+            }
+        }
+
+        // Update the native dropdown selection
+        const selectEl = document.querySelector('#settings_preset_openai');
+        if (selectEl) selectEl.value = String(presetIndex);
+    });
+
+    // ── Phase 4: Logit bias preset (lightweight) ──
+    $('#openai_logit_bias_preset').trigger('change');
+
+    // ── Phase 5: Essential global events ──
+    saveSettingsDebounced();
+    await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
+    await eventSource.emit(event_types.PRESET_CHANGED, { apiId: 'openai', name: presetName });
 }
 
 // ─────────────────────────────────────────
@@ -629,25 +777,39 @@ async function openPresetCards() {
         el.text(visible === total ? `${total} presets` : `${visible} / ${total}`);
     }
 
-    // ---- Search ----
+    // ---- Search (debounced + pre-cached text) ----
+    const _searchCache = new Map();
+    dialog.find('.preset_card').each(function () {
+        const el = $(this);
+        const name = el.data('preset-name').toString().toLowerCase();
+        const desc = el.find('.preset_card_desc').text().toLowerCase();
+        _searchCache.set(this, { name, desc });
+    });
+
+    let _searchTimer = null;
     dialog.on('input', '#preset_cards_search', function () {
-        const q = $(this).val().toString().toLowerCase().trim();
-        let vis = 0;
-        dialog.find('.preset_card').each(function () {
-            const name = $(this).data('preset-name').toString().toLowerCase();
-            const desc = $(this).find('.preset_card_desc').text().toLowerCase();
-            const match = !q || name.includes(q) || desc.includes(q);
-            $(this).toggle(match);
-            if (match) vis++;
-        });
-        let emptyEl = dialog.find('#preset_cards_empty');
-        if (vis === 0 && emptyEl.length === 0) {
-            dialog.find('#preset_cards_grid').append(
-                `<div id="preset_cards_empty">${t`No presets found`}</div>`,
-            );
-        }
-        dialog.find('#preset_cards_empty').toggle(vis === 0);
-        updateCount(vis, presets.length);
+        if (_searchTimer) clearTimeout(_searchTimer);
+        _searchTimer = setTimeout(() => {
+            const q = $(this).val().toString().toLowerCase().trim();
+            let vis = 0;
+            const cards = dialog.find('.preset_card');
+            cards.each(function () {
+                const cached = _searchCache.get(this);
+                const name = cached ? cached.name : $(this).data('preset-name').toString().toLowerCase();
+                const desc = cached ? cached.desc : '';
+                const match = !q || name.includes(q) || desc.includes(q);
+                this.style.display = match ? '' : 'none'; // Direct style instead of jQuery .toggle()
+                if (match) vis++;
+            });
+            let emptyEl = dialog.find('#preset_cards_empty');
+            if (vis === 0 && emptyEl.length === 0) {
+                dialog.find('#preset_cards_grid').append(
+                    `<div id="preset_cards_empty">${t`No presets found`}</div>`,
+                );
+            }
+            dialog.find('#preset_cards_empty').toggle(vis === 0);
+            updateCount(vis, presets.length);
+        }, 150);
     });
 
     // ---- Long press for Concise Mode Profiles ----
@@ -680,11 +842,11 @@ async function openPresetCards() {
                 Object.assign(preset, p.settings);
                 preset.extensions = ext;
 
-                await saveMeta(name, idx, meta);
+                // No saveMeta needed — profile list unchanged
                 toastr.success(L('Configuration loaded'));
 
                 if (oai_settings.preset_settings_openai === name) {
-                    $('#settings_preset_openai').trigger('change');
+                    fastApplyPreset(idx, name);
                 }
 
                 $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
@@ -768,7 +930,7 @@ async function openPresetCards() {
         dialog.find('.preset_card').removeClass('selected');
         $(this).addClass('selected');
 
-        $('#settings_preset_openai').val(idx).trigger('change');
+        fastApplyPreset(idx, name);
         toastr.success(`${t`Switched to`} ${name}`);
     });
 
@@ -780,10 +942,9 @@ async function openPresetCards() {
         await clearImageCache();
         toastr.success(L('Cache cleared successfully'));
 
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
+        // Clear inline bg styles instead of full re-render
+        dialog.find('.preset_card_bg_image').css('background-image', '');
         applyCachedBackgrounds(dialog);
-        dialog.find('#preset_cards_search').trigger('input');
     });
 
     // ---- Edit button ----
@@ -1112,12 +1273,11 @@ async function openPresetCards() {
         const saveGen = genCheck.prop('checked');
         const savePrompt = promptCheck.prop('checked');
 
-        let loadingToast = null;
+        // Smart wait: trigger native save and wait for completion (not fixed 800ms)
         if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
+            const savePromise = waitForPresetSave();
             $('#update_oai_preset').trigger('click');
-            await new Promise(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
+            await savePromise;
         }
 
         const preset = openai_settings[idx];
@@ -1137,20 +1297,20 @@ async function openPresetCards() {
             }
         }
 
-        profiles.push({
+        const newProfile = {
             id: Date.now().toString() + Math.floor(Math.random() * 1000),
             name: profileName,
             settings: snapshot
-        });
+        };
+        profiles.push(newProfile);
 
         meta.profiles = profiles;
         await saveMeta(name, idx, meta);
         toastr.success(L('Configuration saved'));
 
-        // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        // Local DOM append instead of full re-render
+        const i18nCtx = getCardsTemplateContext().i18n;
+        appendProfileRow(card, newProfile, i18nCtx);
     });
 
     // ---- Profiles: Load Configuration ----
@@ -1172,14 +1332,12 @@ async function openPresetCards() {
         Object.assign(preset, profile.settings);
         preset.extensions = ext;
 
-        // Save to disk so changes persist
-        await saveMeta(name, idx, meta);
-
+        // No saveMeta needed — profile list unchanged
         toastr.success(L('Configuration loaded'));
 
-        // If this is the active preset, trigger a native UI reload
+        // Fast-apply to UI (skips ST native per-element trigger loop)
         if (oai_settings.preset_settings_openai === name) {
-            $('#settings_preset_openai').trigger('change');
+            fastApplyPreset(idx, name);
         }
     });
 
@@ -1207,12 +1365,11 @@ async function openPresetCards() {
         const saveGen = genCheck.prop('checked');
         const savePrompt = promptCheck.prop('checked');
 
-        let loadingToast = null;
+        // Smart wait: trigger native save and wait for completion (not fixed 800ms)
         if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
+            const savePromise = waitForPresetSave();
             $('#update_oai_preset').trigger('click');
-            await new Promise(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
+            await savePromise;
         }
 
         const preset = openai_settings[idx];
@@ -1302,20 +1459,20 @@ async function openPresetCards() {
                 const meta = readMeta(preset);
                 const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
 
-                profiles.push({
+                const newProfile = {
                     id: Date.now().toString() + Math.floor(Math.random() * 1000),
                     name: profileName,
                     settings: settings
-                });
+                };
+                profiles.push(newProfile);
 
                 meta.profiles = profiles;
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration saved'));
 
-                const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-                dialog.html($(newHtml).html());
-                applyCachedBackgrounds(dialog);
-                dialog.find('#preset_cards_search').trigger('input');
+                // Local DOM append instead of full re-render
+                const i18nCtx = getCardsTemplateContext().i18n;
+                appendProfileRow(card, newProfile, i18nCtx);
             } catch (err) {
                 console.error(err);
                 toastr.error(L('Failed to parse configuration file'));
@@ -1368,7 +1525,8 @@ async function openPresetCards() {
                 const profile = meta.profiles.find(p => p.id === String(profileId));
                 if (profile) {
                     profile.name = newName;
-                    await saveMeta(name, idx, meta);
+                    // Debounced save — rapid renames won't spam the server
+                    debouncedSaveMeta(name, idx, meta);
                 }
             }
         });
