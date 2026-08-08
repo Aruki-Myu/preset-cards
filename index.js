@@ -17,15 +17,17 @@ import { eventSource, event_types } from '/scripts/events.js';
 // ─────────────────────────────────────────
 // Rust WASM Fast Preset Loading
 // ─────────────────────────────────────────
-import initWasm, { parse_settings_fast } from './wasm/rust_core.js';
-
 let wasmInitialized = false;
+let parse_settings_fast = null;
+
 try {
-    await initWasm();
+    const wasmModule = await import('./wasm/rust_core.js');
+    await wasmModule.default(); // Initialize WASM
+    parse_settings_fast = wasmModule.parse_settings_fast;
     wasmInitialized = true;
     console.log("preset-cards: Rust WASM core initialized successfully!");
 } catch (e) {
-    console.error("preset-cards: Failed to init WASM", e);
+    console.warn("preset-cards: Failed to init WASM. Using native JS parsing fallback.", e);
 }
 
 const originalFetch = window.fetch;
