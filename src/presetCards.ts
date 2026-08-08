@@ -712,6 +712,21 @@ export async function openPresetCards(): Promise<void> {
         await refreshGrid();
     });
 
+    // ---- Profiles: Export All Configurations (导出整棵分支树) ----
+    dialog.on('click', '.preset_card_export_all_btn', async function (e) {
+        e.stopPropagation();
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const choice = await chooseFromOptions(L('Export configuration'), [[L('Export all configurations'), 'export']]);
+        if (choice !== 'export') return;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
+    });
+
     // ---- Profiles: Load Configuration (click = apply + expand) ----
     dialog.on('click', '.preset_card_profile_name', async function (e) {
         e.stopPropagation();

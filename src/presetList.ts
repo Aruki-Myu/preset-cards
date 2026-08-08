@@ -201,6 +201,7 @@ export function getCardsTemplateContext() {
             overwriteConfig: L('Overwrite with current settings'),
             exportConfig: L('Export configuration'),
             importConfig: L('Import configuration'),
+            exportAll: L('Export all configurations'),
             rename: L('Rename'),
             delete: L('Delete'),
             derive: L('Derive Profile'),
