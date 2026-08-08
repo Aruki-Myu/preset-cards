@@ -67,15 +67,19 @@ export async function openPresetCards(): Promise<void> {
     // 本次打开期间的开关切换缓冲：identifier → 本次会话目标 enabled，仅记录被切换过的条目
     const pendingToggles = new Map<string, boolean>();
 
-    // 缓冲键统一为 `${name}:${identifier}`：ST 的 prompt identifier（如 "0-user"）在几乎所有预设同名，
+    // 缓冲键统一为 `${name.length}:${name}:${identifier}`：ST 的 prompt identifier（如 "0-user"）在几乎所有预设同名，
     // 若只以 identifier 为键会跨预设污染（A 卡未保存的编辑被 B 卡保存时静默写入）。
+    // 长度前缀分隔：预设名含 ':'（如 "A:B"）时 name+':' 前缀会误命中其他卡的缓冲，故以 name.length 定界。
+    function bufferPrefix(name: string): string {
+        return `${name.length}:${name}:`;
+    }
     function bufferKey(name: string, identifier: string): string {
-        return `${name}:${identifier}`;
+        return `${bufferPrefix(name)}${identifier}`;
     }
 
     // 只清当前 name 的缓冲条目：其他卡未保存的编辑保留。
     function clearBufferedForName(name: string): void {
-        const prefix = name + ':';
+        const prefix = bufferPrefix(name);
         for (const key of [...sessionEdits.keys()]) {
             if (key.startsWith(prefix)) sessionEdits.delete(key);
         }
@@ -86,7 +90,7 @@ export async function openPresetCards(): Promise<void> {
 
     // 当前 name 的会话编辑过的 identifier 集合（供 buildPromptSnapshot includeFields 使用）。
     function editedIdentifiersForName(name: string): Set<string> {
-        const prefix = name + ':';
+        const prefix = bufferPrefix(name);
         const ids = new Set<string>();
         for (const key of sessionEdits.keys()) {
             if (key.startsWith(prefix)) ids.add(key.slice(prefix.length));
@@ -173,7 +177,7 @@ export async function openPresetCards(): Promise<void> {
     function applyBufferedEdits(preset: Preset, name: string): string[] {
         const missing: string[] = [];
         const seen = new Set<string>();
-        const prefix = name + ':';
+        const prefix = bufferPrefix(name);
         for (const [key, enabled] of pendingToggles) {
             if (!key.startsWith(prefix)) continue;
             const identifier = key.slice(prefix.length);
@@ -203,7 +207,7 @@ export async function openPresetCards(): Promise<void> {
     // 只在 base 保存路径调用：defaultSnapshot 可能尚不存在（首次打开才生成），此时跳过。
     function recordDefaultOriginalFields(meta: PresetMeta, name: string): void {
         if (!Array.isArray(meta.defaultSnapshot)) return;
-        const prefix = name + ':';
+        const prefix = bufferPrefix(name);
         for (const [key, session] of sessionEdits) {
             if (!key.startsWith(prefix)) continue;
             const identifier = key.slice(prefix.length);
@@ -1009,7 +1013,7 @@ export async function openPresetCards(): Promise<void> {
                 toastr.warning(L('Base profile not found, cannot update derived configuration'));
                 return;
             }
-            profile.changes = snapshotToChanges(buildPromptToggleSnapshot(preset), parentStates, profile.changes);
+            profile.changes = snapshotToChanges(buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name) }), parentStates, profile.changes);
             recordDefaultOriginalFields(meta, name);
 
             await saveMeta(name, idx, meta);
