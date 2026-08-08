@@ -34,7 +34,7 @@ export default defineConfig(({ mode }) => ({
         },
         outDir: 'dist',
         emptyOutDir: true,
-        sourcemap: mode === 'production' ? true : 'inline',
+        sourcemap: false,
         minify: mode === 'production',
         target: 'esnext',
     },
