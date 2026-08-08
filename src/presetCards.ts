@@ -840,6 +840,7 @@ export async function openPresetCards(): Promise<void> {
                         return change;
                     });
                 }
+                recordDefaultOriginalFields(meta);
             } else {
                 // v1: not editable via switches
                 toastr.warning(L('This profile type cannot be edited with switches'));
@@ -868,6 +869,7 @@ export async function openPresetCards(): Promise<void> {
                 changes,
             });
             meta.profiles = profiles;
+            recordDefaultOriginalFields(meta);
             await saveMeta(name, idx, meta);
             toastr.success(L('Derived profile created'));
         }
@@ -926,6 +928,7 @@ export async function openPresetCards(): Promise<void> {
                 return;
             }
             profile.changes = snapshotToChanges(buildPromptToggleSnapshot(preset), parentStates, profile.changes);
+            recordDefaultOriginalFields(meta);
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
@@ -1029,6 +1032,7 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration reset'));
             refreshActivePresetUI(name);
+            sessionEdits.clear();
         } else if (isPromptBaseProfile(profile)) {
             // 主 profile：回退到隐藏默认基准
             if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
@@ -1049,6 +1053,7 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration reset'));
             refreshActivePresetUI(name);
+            sessionEdits.clear();
         } else {
             toastr.warning(L('This profile type cannot be reset'));
             return;
