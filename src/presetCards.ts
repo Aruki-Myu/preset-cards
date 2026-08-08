@@ -43,7 +43,7 @@ import {
     chooseFromOptions,
     chooseProfileExportAction,
     chooseProfileSaveTarget,
-    parseImportedProfiles,
+    mergeImportedProfiles,
     warnV1ExcludedFromTreeExport,
 } from './importExport.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
@@ -1094,8 +1094,8 @@ export async function openPresetCards(): Promise<void> {
 
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
-                const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-                const { warnings } = parseImportedProfiles(profiles, parsed, profileName);
+                const existing = Array.isArray(meta.profiles) ? meta.profiles : [];
+                const { profiles, warnings } = mergeImportedProfiles(parsed, existing, profileName);
                 for (const warning of warnings) {
                     toastr.warning(warning);
                 }

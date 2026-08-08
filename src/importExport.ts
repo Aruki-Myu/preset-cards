@@ -13,58 +13,19 @@ import {
 import { promptFieldsEqual, resolveProfileStates } from './promptToggle.js';
 
 // Two-button choice popup: update current profile, or create a new subprofile (delta).
-export async function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
-    const container = $('<div class="preset_cards_save_choice"></div>');
-    container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Save changes to')));
-    const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
-    buttons.append($('<button class="menu_button"></button>')
-        .text(L('Update current profile'))
-        .on('click', function () { resolveChoice('update'); }));
-    buttons.append($('<button class="menu_button"></button>')
-        .text(L('Create new subprofile'))
-        .on('click', function () { resolveChoice('create'); }));
-    container.append(buttons);
-
-    let resolver: (v: 'update' | 'create' | null) => void;
-    const promise = new Promise<'update' | 'create' | null>(r => { resolver = r; });
-
-    function resolveChoice(v: 'update' | 'create' | null): void {
-        $(container).closest('.popup').find('.popup-controls .menu_button').click();
-        resolver(v);
-    }
-
-    // okButton: false 用 popup 内置的隐藏行为（TEXT 类型对 false 隐藏 OK 按钮），按钮仍在 DOM，
-    // resolveChoice 里 .click() 仍能正常触发关闭
-    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
-    return promise;
+export function chooseProfileSaveTarget(): Promise<'update' | 'create' | null> {
+    return chooseFromOptions(L('Save changes to'), [
+        [L('Update current profile'), 'update'],
+        [L('Create new subprofile'), 'create'],
+    ]);
 }
 
 // 导出方式选择弹窗：单一导出 / 关系链导出 / 取消（完整预设导出直接用 ST 自带功能）
-export async function chooseProfileExportAction(): Promise<'profile' | 'tree' | null> {
-    const container = $('<div class="preset_cards_save_choice"></div>');
-    container.append($('<div class="preset_cards_save_choice_title"></div>').text(L('Export configuration')));
-    const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
-    buttons.append($('<button class="menu_button"></button>')
-        .text(L('Export'))
-        .on('click', function () { resolveChoice('profile'); }));
-    buttons.append($('<button class="menu_button"></button>')
-        .text(L('Export with branch chain'))
-        .on('click', function () { resolveChoice('tree'); }));
-    buttons.append($('<button class="menu_button"></button>')
-        .text(L('Cancel'))
-        .on('click', function () { resolveChoice(null); }));
-    container.append(buttons);
-
-    let resolver: (v: 'profile' | 'tree' | null) => void;
-    const promise = new Promise<'profile' | 'tree' | null>(r => { resolver = r; });
-
-    function resolveChoice(v: 'profile' | 'tree' | null): void {
-        $(container).closest('.popup').find('.popup-controls .menu_button').click();
-        resolver(v);
-    }
-
-    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
-    return promise;
+export function chooseProfileExportAction(): Promise<'profile' | 'tree' | null> {
+    return chooseFromOptions(L('Export configuration'), [
+        [L('Export'), 'profile'],
+        [L('Export with branch chain'), 'tree'],
+    ]);
 }
 
 // 通用选项弹窗：标题 + 若干操作按钮 + 取消，返回所选操作或 null
@@ -90,6 +51,8 @@ export async function chooseFromOptions<T extends string>(title: string, options
         resolver(v);
     }
 
+    // okButton: false 用 popup 内置的隐藏行为（TEXT 类型对 false 隐藏 OK 按钮），按钮仍在 DOM，
+    // resolveChoice 里 .click() 仍能正常触发关闭
     callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
     return promise;
 }
@@ -155,8 +118,7 @@ export function buildTreeExportData(meta: PresetMeta, targetId?: string): string
     const exported = ordered.map(p => isPromptBaseProfile(p)
         ? { kind: p.kind, id: p.id, name: p.name, prompts: p.prompts }
         : { kind: p.kind, id: p.id, name: p.name, baseId: p.baseId, changes: p.changes });
-    const payload: Record<string, any> = { kind: 'prompt_tree', formatVersion: 2, profiles: exported };
-    if (targetId) payload.targetId = targetId;
+    const payload = { kind: 'prompt_tree' as const, formatVersion: 2, profiles: exported, ...(targetId ? { targetId } : {}) };
     return JSON.stringify(payload, null, 4);
 }
 
@@ -168,14 +130,15 @@ export function warnV1ExcludedFromTreeExport(meta: PresetMeta): void {
 }
 
 /**
- * 解析导入的 profile 数据并原地合并进 profiles（idMap 去重 / base 复用 / freshId）。
- * 纯逻辑：不做文件读取 / 弹窗 / 持久化；warning 消息收集为字符串数组，由调用方 toast。
+ * 解析导入的 profile 数据，返回并入导入条目后的新 profiles 数组与警告消息（idMap 去重 / base 复用 / freshId）。
+ * 纯逻辑：不做文件读取 / 弹窗 / 持久化，不改动入参 existing；warning 消息收集为字符串数组，由调用方 toast。
  */
-export function parseImportedProfiles(
-    profiles: PresetProfile[],
+export function mergeImportedProfiles(
     parsed: Record<string, any>,
+    existing: PresetProfile[],
     profileName: string,
-): { warnings: string[] } {
+): { profiles: PresetProfile[]; warnings: string[] } {
+    const profiles = [...existing];
     const warnings: string[] = [];
     // 同一毫秒内生成多个 id 可能重复：对既有 id 及本批已生成 id 去重
     const usedIds = new Set(profiles.map((p) => p.id));
@@ -293,5 +256,5 @@ export function parseImportedProfiles(
         });
     }
 
-    return { warnings };
+    return { profiles, warnings };
 }
