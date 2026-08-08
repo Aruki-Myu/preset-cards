@@ -690,6 +690,12 @@
     justify-content: center;
     opacity: 0.5;
     transition: all 0.2s ease;
+    padding: 0;
+    margin: 0;
+    filter: none;
+    min-width: 0;
+    box-sizing: border-box;
+    line-height: 1;
 }
 
 .preset_card_add_profile_btn:hover,
