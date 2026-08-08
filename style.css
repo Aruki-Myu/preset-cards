@@ -675,7 +675,8 @@
 }
 
 .preset_card_add_profile_btn,
-.preset_card_import_profile_btn {
+.preset_card_import_profile_btn,
+.preset_card_export_all_btn {
     width: 20px;
     height: 20px;
     font-size: 11px;
@@ -692,7 +693,8 @@
 }
 
 .preset_card_add_profile_btn:hover,
-.preset_card_import_profile_btn:hover {
+.preset_card_import_profile_btn:hover,
+.preset_card_export_all_btn:hover {
     opacity: 1;
     color: var(--SmartThemeQuoteColor);
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
@@ -1104,7 +1106,8 @@
         transform: translateX(0);
     }
     
-    .preset_card_add_profile_btn {
+    .preset_card_add_profile_btn,
+    .preset_card_export_all_btn {
         opacity: 1;
     }
     
