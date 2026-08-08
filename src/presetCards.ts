@@ -1087,6 +1087,11 @@ export async function openPresetCards(): Promise<void> {
             try {
                 const text = await file.text();
                 const parsed = JSON.parse(text) as Record<string, any>;
+                // 不可信输入形状防御：JSON 文件必须是对象（v1 settings 快照或带 kind 的 profile）。
+                // null / 原始值 / 数组视为畸形文件，走 catch 报错，避免把非对象塞进 settings 生成垃圾 v1 profile。
+                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                    throw new Error('Imported configuration is not a JSON object');
+                }
 
                 let defaultName = file.name.replace(/\.json$/i, '');
                 const profileName = await Popup.show.input(L('Configuration name:'), defaultName, defaultName);

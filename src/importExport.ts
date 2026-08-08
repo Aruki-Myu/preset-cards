@@ -131,7 +131,8 @@ export function warnV1ExcludedFromTreeExport(meta: PresetMeta): void {
 
 /**
  * 解析导入的 profile 数据，返回并入导入条目后的新 profiles 数组与警告消息（idMap 去重 / base 复用 / freshId）。
- * 纯逻辑：不做文件读取 / 弹窗 / 持久化，不改动入参 existing；warning 消息收集为字符串数组，由调用方 toast。
+ * 无 UI / 持久化副作用：不做文件读取 / 弹窗 / 持久化，不改动入参 existing；warning 由调用方 toast。
+ * 注：经 L() 读 localStorage、newProfileId 含时间戳/随机数，非引用透明。
  */
 export function mergeImportedProfiles(
     parsed: Record<string, any>,

@@ -432,7 +432,9 @@ export function snapshotToChanges(
 
 /** 加载配置的核心分支（base / delta / v1），两种加载入口共用。
  * 差异由调用方处理：delta 的「缺失 prompt 已跳过」toast 仅卡片点击加载时显示（showMissingToast）；
- * v1 的 refresh 时机不同（简洁模式走 refreshActivePresetUI，卡片点击走条件性原生刷新）。 */
+ * v1 的 refresh 时机不同（简洁模式走 refreshActivePresetUI，卡片点击走条件性原生刷新）。
+ * 注意：本函数含 UI 通知副作用（内部直接 toastr.warning，文案经 L() 取 i18n），非纯逻辑；
+ * 这也是 promptToggle 依赖 ./i18n.js（L）的原因（依赖方向无环、可接受）。 */
 export function applyProfileToPreset(
     preset: Preset,
     profile: PresetProfile,
