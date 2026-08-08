@@ -3,6 +3,10 @@ import { SlashCommand } from '@sillytavern/scripts/slash-commands/SlashCommand';
 import { SlashCommandParser } from '@sillytavern/scripts/slash-commands/SlashCommandParser';
 import { openPresetCards } from './presetCards.js';
 
+export function refresh(): void {
+    location.reload();
+}
+
 export function init(): void {
     const buttonHtml = `
         <div id="preset_cards_button" class="list-group-item flex-container flexGap5">

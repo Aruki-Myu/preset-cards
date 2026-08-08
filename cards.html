@@ -83,7 +83,10 @@
                             <button class="preset_card_import_profile_btn menu_button" title="{{../i18n.importConfig}}">
                                 <i class="fa-solid fa-file-import"></i>
                             </button>
-                            <button class="preset_card_add_profile_btn menu_button" title="{{../i18n.addConfig}}">
+                            <button class="preset_card_export_all_btn menu_button" title="{{../i18n.exportAll}}">
+                                <i class="fa-solid fa-file-export"></i>
+                            </button>
+                            <button class="preset_card_add_profile_btn menu_button" title="{{../i18n.addBaseConfig}}">
                                 <i class="fa-solid fa-plus"></i>
                             </button>
                         </div>
@@ -91,12 +94,56 @@
                     <div class="preset_card_profiles_list">
                         {{#each this.profiles}}
                         <div class="preset_card_profile_row" data-profile-id="{{this.id}}">
-                            <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
+                            <div class="preset_card_profile_name_wrap">
+                                {{#if this.isBase}}<span class="preset_card_profile_badge badge_base">base</span>{{/if}}
+                                {{#if this.isDelta}}{{#if this.parentName}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{this.parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{../../i18n.derived}}</span>{{/if}}{{/if}}
+                                <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
+                            </div>
                             <div class="preset_card_profile_actions">
+                                <i class="fa-solid fa-code-fork preset_card_profile_derive" title="{{../../i18n.derive}}"></i>
+                                <i class="fa-solid fa-rotate-left preset_card_profile_reset" title="{{../../i18n.resetProfile}}"></i>
                                 <i class="fa-solid fa-file-export preset_card_profile_export" title="{{../../i18n.exportConfig}}"></i>
                                 <i class="fa-solid fa-floppy-disk preset_card_profile_update" title="{{../../i18n.overwriteConfig}}"></i>
                                 <i class="fa-solid fa-pencil preset_card_profile_edit" title="{{../../i18n.rename}}"></i>
                                 <i class="fa-solid fa-trash-can preset_card_profile_delete" title="{{../../i18n.delete}}"></i>
+                            </div>
+                            <div class="preset_card_profile_entries">
+                                {{#each this.entries}}
+                                <div class="preset_card_profile_entry {{#if this.hasFields}}has_fields{{/if}}" data-identifier="{{this.identifier}}">
+                                    <span class="preset_card_profile_entry_name" title="{{this.identifier}}">{{this.name}}</span>
+                                    {{#if this.hasFields}}<span class="preset_card_profile_entry_modified" title="{{../../../i18n.hasValueChanges}}"><i class="fa-solid fa-pen-to-square"></i></span>{{/if}}
+                                    {{#if this.editable}}
+                                    <button class="preset_card_profile_entry_edit" title="{{../../../i18n.editPrompt}}">
+                                        <i class="fa-solid fa-pen"></i>
+                                    </button>
+                                    {{/if}}
+                                    {{#if this.clearable}}
+                                    <button class="preset_card_profile_entry_clear" title="{{../../../i18n.clearValueChange}}">
+                                        <i class="fa-solid fa-eraser"></i>
+                                    </button>
+                                    {{/if}}
+                                    {{#if this.orderable}}
+                                    <button class="preset_card_profile_entry_move preset_card_profile_entry_move_up {{#unless this.canMoveUp}}disabled{{/unless}}" title="{{../../../i18n.moveUp}}">
+                                        <i class="fa-solid fa-chevron-up"></i>
+                                    </button>
+                                    <button class="preset_card_profile_entry_move preset_card_profile_entry_move_down {{#unless this.canMoveDown}}disabled{{/unless}}" title="{{../../../i18n.moveDown}}">
+                                        <i class="fa-solid fa-chevron-down"></i>
+                                    </button>
+                                    {{/if}}
+                                    {{#if this.editable}}
+                                    <span class="preset_card_profile_entry_toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../../../i18n.toggleEntry}}">
+                                        {{#if this.enabled}}<i class="fa-solid fa-toggle-on"></i>{{else}}<i class="fa-solid fa-toggle-off"></i>{{/if}}
+                                    </span>
+                                    {{/if}}
+                                </div>
+                                {{/each}}
+                                {{#unless this.entries.length}}
+                                <div class="preset_card_profile_entry_empty">{{../../i18n.noEntries}}</div>
+                                {{/unless}}
+                                <button class="preset_card_profile_save_btn menu_button hidden" title="{{../../i18n.saveChanges}}">
+                                    <i class="fa-solid fa-floppy-disk"></i>
+                                    <span class="preset_card_profile_save_label">{{../../i18n.saveChanges}}</span>
+                                </button>
                             </div>
                         </div>
                         {{/each}}
