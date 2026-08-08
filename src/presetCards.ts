@@ -36,7 +36,6 @@ import {
     resolveParentStates,
     resolveProfilePrompts,
     reorderPromptOrder,
-    runtimeEnabledFor,
     snapshotToChanges,
 } from './promptToggle.js';
 import {
@@ -158,7 +157,10 @@ export async function openPresetCards(): Promise<void> {
     }
 
     // 该行是否仍有未保存的净变化缓冲条目（toggle 目标或值编辑，net-zero 键已在 handler 中删除）。
+    // 另含非缓冲待保存改动：clear 直接删 profile 持久 fields，以行级 has-pending-clear 标记记录，
+    // 由本函数纳入判定，防止后续净零 toggle/edit 把保存按钮误藏、pending clear 静默丢失（#2）。
     function rowHasBufferedChanges(row: JQuery<HTMLElement>): boolean {
+        if (row.data('has-pending-clear')) return true;
         const name = row.closest('.preset_card').attr('data-preset-name') as string;
         return row.find('.preset_card_profile_entry').toArray().some((el) => {
             const key = bufferKey(name, String($(el).data('identifier')));
@@ -168,8 +170,9 @@ export async function openPresetCards(): Promise<void> {
         });
     }
 
-    // toggle/edit 后统一刷新行的 modified 标记与保存按钮显隐（无净变化缓冲则收起）。
-    // 注意：clear 不在此列——clear 直接删 profile 持久 fields，本身就是待保存改动，需保留保存按钮。
+    // toggle/edit/clear 后统一刷新行的 modified 标记与保存按钮显隐（无净变化缓冲则收起）。
+    // clear 直接删 profile 持久 fields 属非缓冲待保存改动：以行级 has-pending-clear 标记保留保存按钮，
+    // 由 rowHasBufferedChanges 纳入判定；保存/重渲染重建行后标记清除。
     function syncRowModified(row: JQuery<HTMLElement>): void {
         if (rowHasBufferedChanges(row)) {
             row.addClass('modified');
@@ -740,6 +743,7 @@ export async function openPresetCards(): Promise<void> {
 
         // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲并收起保存按钮
         clearBufferedForName(name);
+        card.find('.preset_card_profile_row').removeData('has-pending-clear');
         card.find('.preset_card_profile_row').removeClass('modified');
         card.find('.preset_card_profile_entry').removeClass('dirty');
         card.find('.preset_card_profile_save_btn').addClass('hidden');
@@ -767,12 +771,20 @@ export async function openPresetCards(): Promise<void> {
         const key = bufferKey(name, identifier);
         const target = !on;
 
-        // 目标值等于该条当前真实 enabled（prompt_order/prompts，应用缓冲前的值）即改回原值（无净变化）：
-        // 取消缓冲；否则记录本次目标。
+        // 净零参照 = 目标行 profile 解析链下的 enabled（DOM 的 on/off 即此值）：仅当目标等于该
+        // profile 原本的解析值才算「点回原样」（非活动 profile 同样成立，#1/#4），否则记录缓冲；
+        // 拿不到解析值（profile 缺失/解析失败）时保守处理：不判净零，保留缓冲。
         const idx = card.data('preset-index') as number;
         const preset = openai_settings[idx] as Preset;
-        const prompt = findPromptInPreset(preset, identifier);
-        if (prompt && runtimeEnabledFor(prompt, preset) === target) {
+        const profileId = row.data('profile-id');
+        const meta = readMeta(preset);
+        const profile = getProfile(meta, profileId);
+        let resolvedEnabled: boolean | undefined;
+        if (profile && (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile))) {
+            const resolved = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            resolvedEnabled = resolved.find((e) => e.identifier === identifier)?.enabled;
+        }
+        if (resolvedEnabled === target) {
             pendingToggles.delete(key);
         } else {
             pendingToggles.set(key, target);
@@ -898,9 +910,10 @@ export async function openPresetCards(): Promise<void> {
             }
         }
 
-        // 本地回写后标记 modified（与编辑/开关行为一致），保存时落盘
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // 记录行内存在非缓冲待保存 clear（防止后续净零 toggle/edit 的 syncRowModified 误藏保存按钮），
+        // 再统一刷新行状态；保存/重渲染重建行时标记自然清除。
+        row.data('has-pending-clear', true);
+        syncRowModified(row);
 
         // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
         entry.removeClass('has_fields');
