@@ -161,7 +161,7 @@
 .preset_card.selected {
     border-color: var(--SmartThemeQuoteColor);
     box-shadow: inset 0 3px 0 var(--SmartThemeQuoteColor),
-                0 4px 20px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.12);
+        0 4px 20px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.12);
 }
 
 /* ---- Card header ---- */
@@ -314,7 +314,7 @@
     position: absolute;
     top: -8px;
     right: -8px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
     z-index: 10;
 }
 
@@ -444,11 +444,11 @@
     font-size: 20px;
     font-weight: 800;
     letter-spacing: 0.2px;
-    text-shadow: 
-        0 1px 2px rgba(0,0,0,0.5),
-        0 4px 12px rgba(0,0,0,0.3),
-        0 8px 24px rgba(0,0,0,0.25),
-        0 16px 40px rgba(0,0,0,0.2) !important;
+    text-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.5),
+        0 4px 12px rgba(0, 0, 0, 0.3),
+        0 8px 24px rgba(0, 0, 0, 0.25),
+        0 16px 40px rgba(0, 0, 0, 0.2) !important;
     padding: 40px;
     margin: -40px;
     opacity: 0;
@@ -460,11 +460,11 @@
     font-size: 13px;
     line-height: 1.5;
     -webkit-line-clamp: 1;
-    text-shadow: 
-        0 1px 2px rgba(0,0,0,0.4),
-        0 3px 8px rgba(0,0,0,0.3),
-        0 6px 16px rgba(0,0,0,0.2),
-        0 12px 24px rgba(0,0,0,0.15) !important;
+    text-shadow:
+        0 1px 2px rgba(0, 0, 0, 0.4),
+        0 3px 8px rgba(0, 0, 0, 0.3),
+        0 6px 16px rgba(0, 0, 0, 0.2),
+        0 12px 24px rgba(0, 0, 0, 0.15) !important;
     padding: 30px;
     margin: -30px;
     opacity: 0;
@@ -487,7 +487,10 @@
 /* Background Image Feature */
 .preset_card_bg_image {
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     background-size: cover;
     background-position: center;
     opacity: 0;
@@ -499,8 +502,11 @@
 .preset_card_bg_image::after {
     content: '';
     position: absolute;
-    top: 0; left: 0; right: 0; bottom: 0;
-    background: linear-gradient(to bottom, transparent 20%, rgba(0,0,0,0.85) 100%);
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: linear-gradient(to bottom, transparent 20%, rgba(0, 0, 0, 0.55) 100%);
 }
 
 #preset_cards_container.preset_cards_concise_mode .preset_card_bg_image {
@@ -512,7 +518,9 @@
 }
 
 /* Ensure content stays above background */
-.preset_card_header, .preset_card_body, .preset_card_footer {
+.preset_card_header,
+.preset_card_body,
+.preset_card_footer {
     position: relative;
     z-index: 1;
 }
@@ -656,7 +664,7 @@
     letter-spacing: 1px;
 }
 
-.preset_card_profiles_header > div {
+.preset_card_profiles_header>div {
     display: flex;
     gap: 4px;
 }
@@ -747,6 +755,7 @@
 .preset_card_profile_delete:hover {
     color: #f44336;
 }
+
 .preset_card_profile_edit:hover,
 .preset_card_profile_update:hover,
 .preset_card_profile_export:hover {
@@ -766,22 +775,23 @@
 }
 
 /* ---- Mobile / Touch adaptations ---- */
-@media (hover: none) and (pointer: coarse), (max-width: 500px) {
+@media (hover: none) and (pointer: coarse),
+(max-width: 500px) {
     .preset_card_profile_actions {
         opacity: 1;
         transform: translateX(0);
     }
-    
+
     .preset_card_add_profile_btn {
         opacity: 1;
     }
-    
+
     /* Expand touch targets for icons on mobile */
     .preset_card_profile_actions i {
         padding: 4px;
         margin: -4px;
     }
-    
+
     #preset_cards_grid {
         grid-template-columns: 1fr;
     }
