@@ -84,15 +84,4 @@ declare module '@sillytavern/scripts/openai' {
         extensions?: Record<string, unknown>;
         [key: string]: unknown;
     };
-    export const promptManager: {
-        render(afterTryGenerate?: boolean): void;
-        saveServiceSettings(): Promise<void>;
-        configuration: {
-            promptOrder: {
-                strategy: 'global' | 'character';
-                dummyId?: number;
-            };
-        };
-        activeCharacter?: { id: number } | null;
-    } | null;
 }
