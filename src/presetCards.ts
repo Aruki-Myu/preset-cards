@@ -1,6 +1,6 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
-import { oai_settings, openai_settings, openai_setting_names, promptManager } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, promptManager, settingsToUpdate } from '@sillytavern/scripts/openai';
 import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
@@ -325,19 +325,36 @@ export async function openPresetCards(): Promise<void> {
         });
     });
 
-    // ---- Export button (导出整棵分支树) ----
-    dialog.on('click', '.preset_card_export_btn', async function (e) {
+    // 导出完整预设 JSON（剔除敏感字段与连接数据），卡片头部导出按钮专用。
+    // 与配置区头部的「导出全部配置」(`${name}-tree.json`，整棵分支树) 区分。
+    function exportPresetFile(name: string, idx: number): void {
+        const preset = structuredClone(openai_settings[idx] as Preset);
+
+        const sensitiveFields = [
+            'reverse_proxy', 'proxy_password', 'custom_url',
+            'custom_include_body', 'custom_exclude_body', 'custom_include_headers',
+            'vertexai_region', 'vertexai_express_project_id',
+            'azure_base_url', 'azure_deployment_name',
+            'workers_ai_account_id',
+        ];
+        sensitiveFields.forEach(field => delete preset[field]);
+
+        if (settingsToUpdate) {
+            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
+                if (isConnection) { delete preset[settingName]; }
+            }
+        }
+
+        download(JSON.stringify(preset, null, 4), `${name}.json`, 'application/json');
+    }
+
+    // ---- Export button (导出完整预设，剔除敏感字段) ----
+    dialog.on('click', '.preset_card_export_btn', function (e) {
         e.stopPropagation();
         const name = $(this).attr('data-preset-name') as string;
         const idx = $(this).data('preset-index') as number;
 
-        const choice = await chooseFromOptions(L('Export all configurations'), [[L('Export all configurations'), 'export']]);
-        if (choice !== 'export') return;
-
-        const preset = openai_settings[idx] as Preset;
-        const meta = readMeta(preset);
-        warnV1ExcludedFromTreeExport(meta);
-        download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
+        exportPresetFile(name, idx);
     });
 
     // ---- Delete button ----
