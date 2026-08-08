@@ -156,6 +156,33 @@ export async function openPresetCards(): Promise<void> {
         });
     }
 
+    // 该行是否仍有未保存的净变化缓冲条目（toggle 目标或值编辑，net-zero 键已在 handler 中删除）。
+    // 另含非缓冲待保存改动：clear 直接删 profile 持久 fields，以行级 has-pending-clear 标记记录，
+    // 由本函数纳入判定，防止后续净零 toggle/edit 把保存按钮误藏、pending clear 静默丢失（#2）。
+    function rowHasBufferedChanges(row: JQuery<HTMLElement>): boolean {
+        if (row.data('has-pending-clear')) return true;
+        const name = row.closest('.preset_card').attr('data-preset-name') as string;
+        return row.find('.preset_card_profile_entry').toArray().some((el) => {
+            const key = bufferKey(name, String($(el).data('identifier')));
+            if (pendingToggles.has(key)) return true;
+            const session = sessionEdits.get(key);
+            return !!session && !promptFieldsEqual(session.edited, session.initial);
+        });
+    }
+
+    // toggle/edit/clear 后统一刷新行的 modified 标记与保存按钮显隐（无净变化缓冲则收起）。
+    // clear 直接删 profile 持久 fields 属非缓冲待保存改动：以行级 has-pending-clear 标记保留保存按钮，
+    // 由 rowHasBufferedChanges 纳入判定；保存/重渲染重建行后标记清除。
+    function syncRowModified(row: JQuery<HTMLElement>): void {
+        if (rowHasBufferedChanges(row)) {
+            row.addClass('modified');
+            row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        } else {
+            row.removeClass('modified');
+            row.find('.preset_card_profile_save_btn').addClass('hidden');
+        }
+    }
+
     // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
@@ -346,6 +373,9 @@ export async function openPresetCards(): Promise<void> {
 
         // Ignore if clicking action buttons
         if ($(e.target as Element).closest('.preset_card_actions').length) return;
+
+        // Ignore if clicking inside the profiles section (entries, names, blank row space)
+        if ($(e.target as Element).closest('.preset_card_profiles_section').length) return;
 
         const name = $(this).attr('data-preset-name') as string;
 
@@ -713,6 +743,7 @@ export async function openPresetCards(): Promise<void> {
 
         // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲并收起保存按钮
         clearBufferedForName(name);
+        card.find('.preset_card_profile_row').removeData('has-pending-clear');
         card.find('.preset_card_profile_row').removeClass('modified');
         card.find('.preset_card_profile_entry').removeClass('dirty');
         card.find('.preset_card_profile_save_btn').addClass('hidden');
@@ -737,14 +768,37 @@ export async function openPresetCards(): Promise<void> {
         const row = toggle.closest('.preset_card_profile_row');
         const entry = toggle.closest('.preset_card_profile_entry');
         const identifier = String(entry.data('identifier'));
-        pendingToggles.set(bufferKey(name, identifier), !on);
+        const key = bufferKey(name, identifier);
+        const target = !on;
 
-        // 本会话已编辑未保存：条目标 dirty 高亮
-        entry.addClass('dirty');
+        // 净零参照 = 目标行 profile 解析链下的 enabled（DOM 的 on/off 即此值）：仅当目标等于该
+        // profile 原本的解析值才算「点回原样」（非活动 profile 同样成立，#1/#4），否则记录缓冲；
+        // 拿不到解析值（profile 缺失/解析失败）时保守处理：不判净零，保留缓冲。
+        const idx = card.data('preset-index') as number;
+        const preset = openai_settings[idx] as Preset;
+        const profileId = row.data('profile-id');
+        const meta = readMeta(preset);
+        const profile = getProfile(meta, profileId);
+        let resolvedEnabled: boolean | undefined;
+        if (profile && (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile))) {
+            const resolved = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            resolvedEnabled = resolved.find((e) => e.identifier === identifier)?.enabled;
+        }
+        if (resolvedEnabled === target) {
+            pendingToggles.delete(key);
+        } else {
+            pendingToggles.set(key, target);
+        }
 
-        // Mark the row as modified so the save button shows up
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // dirty = 该条仍存在任一未保存的净变化缓冲（与 applyDirtyHighlights 判定一致）
+        if (!pendingToggles.has(key) && !sessionEdits.has(key)) {
+            entry.removeClass('dirty');
+        } else {
+            entry.addClass('dirty');
+        }
+
+        // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
+        syncRowModified(row);
     });
 
     // ---- Profiles: Edit entry value fields (opens the prompt edit popup) ----
@@ -770,24 +824,32 @@ export async function openPresetCards(): Promise<void> {
         if (!editedFields) return;
 
         // 累积式记录本次编辑：保存时统一应用；多次编辑保留第一次的初始值（reset 还原到首次编辑前）
-        const session = sessionEdits.get(bufferKey(name, identifier));
-        sessionEdits.set(bufferKey(name, identifier), {
-            initial: session?.initial ?? capturePromptFields(prompt),
-            edited: { ...(session?.edited ?? {}), ...filterFields(editedFields) },
-        });
+        const key = bufferKey(name, identifier);
+        const session = sessionEdits.get(key);
+        const initial = session?.initial ?? capturePromptFields(prompt);
+        const edited = { ...(session?.edited ?? {}), ...filterFields(editedFields) };
 
-        // 本会话已编辑未保存：条目标 dirty 高亮
-        entry.addClass('dirty');
+        // 改回原值（edited 与 initial 净相等）即无净变化 → 取消缓冲；否则保留。
+        if (promptFieldsEqual(edited, initial)) {
+            sessionEdits.delete(key);
+        } else {
+            sessionEdits.set(key, { initial, edited });
+        }
 
-        // Mark the row as modified so the save button shows up
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // dirty = 该条仍存在任一未保存的净变化缓冲（与 applyDirtyHighlights 判定一致）
+        if (!pendingToggles.has(key) && !sessionEdits.has(key)) {
+            entry.removeClass('dirty');
+        } else {
+            entry.addClass('dirty');
+        }
+
+        // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
+        syncRowModified(row);
 
         // 仅 UI：本地刷新条目名（值已缓冲，保存时才写入 preset 与运行态）
         const nameEl = entry.find('.preset_card_profile_entry_name');
-        const targetName = sessionEdits.get(bufferKey(name, identifier))?.edited.name;
-        if (nameEl.length && typeof targetName === 'string') {
-            nameEl.text(targetName).attr('title', identifier);
+        if (nameEl.length && typeof edited.name === 'string') {
+            nameEl.text(edited.name).attr('title', identifier);
         }
     });
 
@@ -848,9 +910,10 @@ export async function openPresetCards(): Promise<void> {
             }
         }
 
-        // 本地回写后标记 modified（与编辑/开关行为一致），保存时落盘
-        row.addClass('modified');
-        row.find('.preset_card_profile_save_btn').removeClass('hidden');
+        // 记录行内存在非缓冲待保存 clear（防止后续净零 toggle/edit 的 syncRowModified 误藏保存按钮），
+        // 再统一刷新行状态；保存/重渲染重建行时标记自然清除。
+        row.data('has-pending-clear', true);
+        syncRowModified(row);
 
         // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
         entry.removeClass('has_fields');

@@ -87,7 +87,7 @@ export function applyEntryState(preset: Preset, identifier: string, enabled: boo
  * R5：修复默认预设常缺 prompts[].enabled 键、快照把全部 prompt 记成禁用的问题。
  * 只读，不改写入侧。
  */
-function runtimeEnabledFor(prompt: { identifier: string; enabled?: boolean }, preset: Preset): boolean {
+export function runtimeEnabledFor(prompt: { identifier: string; enabled?: boolean }, preset: Preset): boolean {
     const list = Array.isArray(preset.prompt_order)
         ? preset.prompt_order.find((x: any) => x && String(x.character_id) === '100001')
         : undefined;
