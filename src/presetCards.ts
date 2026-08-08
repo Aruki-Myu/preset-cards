@@ -142,10 +142,25 @@ export async function openPresetCards(): Promise<void> {
         }
     }
 
+    // 重渲染后按当前缓冲恢复 dirty 高亮：保存/加载 profile/reset 已清缓冲，自然不恢复；
+    // 未清缓冲的路径（如「保存 base profile」后继续编辑）则按 bufferKey 逐条还原。
+    function applyDirtyHighlights(): void {
+        dialog.find('.preset_card_profile_entry').each(function () {
+            const entry = $(this);
+            const name = entry.closest('.preset_card').attr('data-preset-name') as string;
+            const identifier = String(entry.data('identifier'));
+            const key = bufferKey(name, identifier);
+            if (sessionEdits.has(key) || pendingToggles.has(key)) {
+                entry.addClass('dirty');
+            }
+        });
+    }
+
     // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
+        applyDirtyHighlights();
         if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
         dialog.find('#preset_cards_search').trigger('input');
     }
@@ -699,6 +714,7 @@ export async function openPresetCards(): Promise<void> {
         // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲并收起保存按钮
         clearBufferedForName(name);
         card.find('.preset_card_profile_row').removeClass('modified');
+        card.find('.preset_card_profile_entry').removeClass('dirty');
         card.find('.preset_card_profile_save_btn').addClass('hidden');
 
         // Toggle expanded entry list (click again to collapse)
@@ -722,6 +738,9 @@ export async function openPresetCards(): Promise<void> {
         const entry = toggle.closest('.preset_card_profile_entry');
         const identifier = String(entry.data('identifier'));
         pendingToggles.set(bufferKey(name, identifier), !on);
+
+        // 本会话已编辑未保存：条目标 dirty 高亮
+        entry.addClass('dirty');
 
         // Mark the row as modified so the save button shows up
         row.addClass('modified');
@@ -756,6 +775,9 @@ export async function openPresetCards(): Promise<void> {
             initial: session?.initial ?? capturePromptFields(prompt),
             edited: { ...(session?.edited ?? {}), ...filterFields(editedFields) },
         });
+
+        // 本会话已编辑未保存：条目标 dirty 高亮
+        entry.addClass('dirty');
 
         // Mark the row as modified so the save button shows up
         row.addClass('modified');
@@ -832,6 +854,12 @@ export async function openPresetCards(): Promise<void> {
 
         // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
         entry.removeClass('has_fields');
+        // 缓冲清空后（值编辑与开关缓冲均无）该条不再是「会话未保存」状态，移除 dirty 高亮；
+        // 若 toggle 缓冲仍在，则本条目属于「开/关待保存」，保留蓝色。
+        const clearKey = bufferKey(name, identifier);
+        if (!sessionEdits.has(clearKey) && !pendingToggles.has(clearKey)) {
+            entry.removeClass('dirty');
+        }
         entry.find('.preset_card_profile_entry_modified').remove();
         $(this).remove();
     });
