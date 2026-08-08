@@ -1,6 +1,7 @@
 import { oai_settings, promptManager } from '@sillytavern/scripts/openai';
+import { L } from './i18n.js';
 import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
-import type { Preset, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
+import type { Preset, PresetProfile, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
 /** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。
  * injection_position 为用户可编辑字段，随 profile 捕获/应用；
@@ -12,6 +13,11 @@ export const PROMPT_FIELD_WHITELIST: (keyof PromptFields)[] = [
     'role',
     'injection_position',
 ];
+
+/** 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）。 */
+export function promptFieldsEqual(a: PromptFields, b: PromptFields): boolean {
+    return PROMPT_FIELD_WHITELIST.every((key) => a[key] === b[key]);
+}
 
 /**
  * 采集单个 prompt 的值字段（仅白名单键，跳过 undefined）。
@@ -422,4 +428,40 @@ export function snapshotToChanges(
     }
 
     return changes;
+}
+
+/** 加载配置的核心分支（base / delta / v1），两种加载入口共用。
+ * 差异由调用方处理：delta 的「缺失 prompt 已跳过」toast 仅卡片点击加载时显示（showMissingToast）；
+ * v1 的 refresh 时机不同（简洁模式走 refreshActivePresetUI，卡片点击走条件性原生刷新）。 */
+export function applyProfileToPreset(
+    preset: Preset,
+    profile: PresetProfile,
+    allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
+    opts?: { showMissingToast?: boolean },
+): void {
+    if (isPromptBaseProfile(profile)) {
+        applyBaseProfile(preset, profile);
+    } else if (isPromptDeltaProfile(profile)) {
+        const states = resolveProfileStates(profile, allProfiles);
+        if (states.length === 0) {
+            toastr.warning(L('Base profile not found, applying changes only'));
+        } else {
+            applyBaseProfile(preset, {
+                formatVersion: 2,
+                kind: 'prompt_base',
+                id: profile.baseId || 'parent',
+                name: 'Parent',
+                prompts: states,
+            });
+        }
+        const { missing } = applyDeltaProfile(preset, profile, undefined);
+        if (opts?.showMissingToast && missing.length > 0) {
+            toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
+        }
+    } else {
+        // v1 全量快照：合并 settings，保留 extensions
+        const ext = preset.extensions;
+        Object.assign(preset, profile.settings);
+        preset.extensions = ext;
+    }
 }
