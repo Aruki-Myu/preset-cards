@@ -51,6 +51,13 @@ export interface PromptDeltaProfile {
     changes: PromptDeltaChange[];
 }
 
+/** defaultSnapshot 条目：开关 + 惰性记录首次编辑前的原始值字段（reset 还原用，可选）。 */
+export interface PromptDefaultSnapshotEntry {
+    identifier: string;
+    enabled: boolean;
+    originalFields?: PromptFields;
+}
+
 export type PresetProfile = PresetProfileV1 | PromptBaseProfile | PromptDeltaProfile;
 
 export function isPromptBaseProfile(profile: PresetProfile): profile is PromptBaseProfile {
@@ -67,7 +74,7 @@ export interface PresetMeta {
     profiles: PresetProfile[];
     bgImage: string;
     /** 隐藏默认基准：自动维护，不显示、不参与派生。供重置回退。 */
-    defaultSnapshot?: { identifier: string; enabled: boolean }[];
+    defaultSnapshot?: PromptDefaultSnapshotEntry[];
 }
 
 /** 按 id 查 profile（id 归一化为字符串，兼容数字/字符串来源）。 */
