@@ -8,10 +8,64 @@ export type Preset = Record<string, any> & {
     extensions?: Record<string, any>;
 };
 
-export interface PresetProfile {
+export interface PresetProfileV1 {
     id: string;
     name: string;
     settings: Record<string, any>;
+    formatVersion?: 1;
+}
+
+/** prompt 值字段（全可选，向后兼容旧数据）。 */
+export interface PromptFields {
+    content?: string;
+    name?: string;
+    role?: string;
+    injection_position?: number;
+    injection_depth?: number;
+    injection_order?: number;
+}
+
+/** 主 profile：记录当前预设全部 prompts 的开关，可附带值字段（fields），不存扩展。 */
+export interface PromptBaseProfile {
+    formatVersion: 2;
+    kind: 'prompt_base';
+    id: string;
+    name: string;
+    prompts: { identifier: string; enabled: boolean; fields?: PromptFields }[];
+}
+
+/** 派生 profile 的一条差异：开关差异 + 值差异（content/role/name 等）。 */
+export interface PromptDeltaChange {
+    identifier: string;
+    enabled?: boolean;
+    fields?: Record<string, any>;
+}
+
+/** 派生 profile：相对主 profile 的差异，加载时「主 + 子」叠加应用。 */
+export interface PromptDeltaProfile {
+    formatVersion: 2;
+    kind: 'prompt_delta';
+    id: string;
+    name: string;
+    baseId: string;
+    changes: PromptDeltaChange[];
+}
+
+/** defaultSnapshot 条目：开关 + 惰性记录首次编辑前的原始值字段（reset 还原用，可选）。 */
+export interface PromptDefaultSnapshotEntry {
+    identifier: string;
+    enabled: boolean;
+    originalFields?: PromptFields;
+}
+
+export type PresetProfile = PresetProfileV1 | PromptBaseProfile | PromptDeltaProfile;
+
+export function isPromptBaseProfile(profile: PresetProfile): profile is PromptBaseProfile {
+    return (profile as { kind?: string }).kind === 'prompt_base';
+}
+
+export function isPromptDeltaProfile(profile: PresetProfile): profile is PromptDeltaProfile {
+    return (profile as { kind?: string }).kind === 'prompt_delta';
 }
 
 export interface PresetMeta {
@@ -19,6 +73,18 @@ export interface PresetMeta {
     models: string[];
     profiles: PresetProfile[];
     bgImage: string;
+    /** 隐藏默认基准：自动维护，不显示、不参与派生。供重置回退。 */
+    defaultSnapshot?: PromptDefaultSnapshotEntry[];
+}
+
+/** 按 id 查 profile（id 归一化为字符串，兼容数字/字符串来源）。 */
+export function getProfile(meta: PresetMeta, profileId: unknown): PresetProfile | undefined {
+    return meta.profiles.find((p) => p.id === String(profileId));
+}
+
+/** 生成新的 profile id（时间戳 + 随机后缀）。 */
+export function newProfileId(): string {
+    return Date.now().toString() + Math.floor(Math.random() * 1000);
 }
 
 /**
@@ -31,6 +97,7 @@ export function readMeta(preset: Preset | undefined): PresetMeta {
         models: Array.isArray(ext?.models) ? ext.models : [],
         profiles: Array.isArray(ext?.profiles) ? ext.profiles : [],
         bgImage: ext?.bgImage || '',
+        defaultSnapshot: Array.isArray(ext?.defaultSnapshot) ? ext.defaultSnapshot : undefined,
     };
 }
 
@@ -48,6 +115,7 @@ export async function saveMeta(presetName: string, presetIndex: number, meta: Pr
         models: meta.models || [],
         profiles: meta.profiles || [],
         bgImage: meta.bgImage || '',
+        defaultSnapshot: meta.defaultSnapshot,
     };
 
     // Also update oai_settings if this is the current preset
