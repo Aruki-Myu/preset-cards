@@ -19,6 +19,7 @@ import {
     type PromptDeltaChange,
     type PromptDeltaProfile,
     type PromptFields,
+    type PresetMeta,
 } from './meta.js';
 import {
     PROMPT_FIELD_WHITELIST,
@@ -134,6 +135,27 @@ export async function openPresetCards(): Promise<void> {
             }
             return entry;
         });
+    }
+
+    // 把本次编辑过的条目的原始值字段惰性写入 defaultSnapshot（已存在则不覆盖）。
+    // 只在 base 保存路径调用：defaultSnapshot 可能尚不存在（首次打开才生成），此时跳过。
+    function recordDefaultOriginalFields(meta: PresetMeta): void {
+        if (!Array.isArray(meta.defaultSnapshot)) return;
+        for (const [identifier, session] of sessionEdits) {
+            const entry = meta.defaultSnapshot.find((d) => d.identifier === identifier);
+            if (!entry || entry.originalFields) continue;
+            entry.originalFields = { ...filterFields(session.initial) };
+        }
+    }
+
+    // 把 defaultSnapshot 记录的原始值字段应用回 preset（reset 到默认时还原首次编辑前的值）。
+    function applyDefaultOriginalFields(preset: Preset, meta: PresetMeta): void {
+        if (!Array.isArray(meta.defaultSnapshot)) return;
+        for (const d of meta.defaultSnapshot) {
+            if (!d.originalFields) continue;
+            const prompt = findPromptInPreset(preset, d.identifier);
+            if (prompt) Object.assign(prompt, filterFields(d.originalFields));
+        }
     }
 
     // ---- Search ----
@@ -650,9 +672,10 @@ export async function openPresetCards(): Promise<void> {
         const prompt = findPromptInPreset(preset, identifier);
         if (!prompt) return;
 
-        // 记录本次编辑，保存时据此计算值差异
+        // 记录本次编辑，保存时据此计算值差异；多次编辑保留第一次的初始值（reset 还原到首次编辑前）
+        const prevSession = sessionEdits.get(identifier);
         sessionEdits.set(identifier, {
-            initial: capturePromptFields(prompt),
+            initial: prevSession?.initial ?? capturePromptFields(prompt),
             edited: editedFields,
         });
 
@@ -803,6 +826,7 @@ export async function openPresetCards(): Promise<void> {
                 // enabled 全量合并；fields 仅对本次编辑的条目（与编辑初值无净变化时清除），
                 // 其余条目保留既有 fields（见 mergeBaseSnapshot）
                 mergeBaseSnapshot(profile, snapshot);
+                recordDefaultOriginalFields(meta);
             } else if (isPromptDeltaProfile(profile)) {
                 // 基线用父链解析状态（不含本 delta 自身 changes），否则未编辑的已存差异与基线相等而被 diff 掉
                 const parentEntries = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
@@ -889,6 +913,7 @@ export async function openPresetCards(): Promise<void> {
             // 本次会话编辑过的条目按与编辑初值是否有净变化决定保留/清除（与保存流程一致，见 mergeBaseSnapshot）
             const snapshot = buildPromptSnapshot(preset, { includeFields: new Set(sessionEdits.keys()) });
             mergeBaseSnapshot(profile, snapshot);
+            recordDefaultOriginalFields(meta);
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
@@ -990,6 +1015,7 @@ export async function openPresetCards(): Promise<void> {
                     toastr.warning(L('No default baseline available'));
                     return;
                 }
+                applyDefaultOriginalFields(preset, meta);
                 const tmp: PromptBaseProfile = {
                     formatVersion: 2,
                     kind: 'prompt_base',
@@ -1009,7 +1035,9 @@ export async function openPresetCards(): Promise<void> {
                 toastr.warning(L('No default baseline available'));
                 return;
             }
-            profile.prompts = structuredClone(meta.defaultSnapshot);
+            applyDefaultOriginalFields(preset, meta);
+            // 只回写开关；originalFields 是 reset 专用元数据，不随 profile 持久化
+            profile.prompts = structuredClone(meta.defaultSnapshot).map(({ identifier, enabled }) => ({ identifier, enabled }));
             const tmp: PromptBaseProfile = {
                 formatVersion: 2,
                 kind: 'prompt_base',
