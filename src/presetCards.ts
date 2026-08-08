@@ -1,6 +1,6 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
-import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate, promptManager } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, promptManager } from '@sillytavern/scripts/openai';
 import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
@@ -163,6 +163,33 @@ export async function openPresetCards(): Promise<void> {
         return promise;
     }
 
+    // 通用选项弹窗：标题 + 若干操作按钮 + 取消，返回所选操作或 null
+    async function chooseFromOptions<T extends string>(title: string, options: [label: string, value: T][]): Promise<T | null> {
+        const container = $('<div class="preset_cards_save_choice"></div>');
+        container.append($('<div class="preset_cards_save_choice_title"></div>').text(title));
+        const buttons = $('<div class="preset_cards_save_choice_actions"></div>');
+        for (const [label, value] of options) {
+            buttons.append($('<button class="menu_button"></button>')
+                .text(label)
+                .on('click', function () { resolveChoice(value); }));
+        }
+        buttons.append($('<button class="menu_button"></button>')
+            .text(L('Cancel'))
+            .on('click', function () { resolveChoice(null); }));
+        container.append(buttons);
+
+        let resolver: (v: T | null) => void;
+        const promise = new Promise<T | null>(r => { resolver = r; });
+
+        function resolveChoice(v: T | null): void {
+            $(container).closest('.popup').find('.popup-controls .menu_button').click();
+            resolver(v);
+        }
+
+        callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
+        return promise;
+    }
+
     // 单 profile 自包含导出（旧版格式）：base → prompt_base / delta → 附解析后父快照 / v1 → settings
     function buildProfileExportData(profile: PresetProfile, meta: PresetMeta): string {
         if (isPromptBaseProfile(profile)) {
@@ -189,55 +216,41 @@ export async function openPresetCards(): Promise<void> {
         return JSON.stringify(profile.settings, null, 4);
     }
 
-    // 导出完整分支链 prompt_tree：从根 base 沿 baseId 一路收集到目标，保留原始 id/baseId 以便还原
-    function buildTreeExportData(profile: PromptBaseProfile | PromptDeltaProfile, meta: PresetMeta): string {
-        const chain: (PromptBaseProfile | PromptDeltaProfile)[] = [];
-        const seen = new Set<string>();
-        let current: PromptBaseProfile | PromptDeltaProfile | undefined = profile;
-        while (current && !seen.has(current.id)) {
-            seen.add(current.id);
-            chain.unshift(current);
-            if (isPromptBaseProfile(current)) break;
-            const parent = getProfile(meta, current.baseId);
-            current = parent && (isPromptBaseProfile(parent) || isPromptDeltaProfile(parent))
-                ? parent
-                : undefined;
-        }
-        const profiles = chain.map(p => isPromptBaseProfile(p)
-            ? { kind: p.kind, id: p.id, name: p.name, prompts: p.prompts }
-            : { kind: p.kind, id: p.id, name: p.name, baseId: p.baseId, changes: p.changes });
-        return JSON.stringify({ kind: 'prompt_tree', formatVersion: 2, profiles }, null, 4);
-    }
-
-    // 导出整个预设 JSON（与卡片级导出按钮共用）：剔除敏感字段与连接数据后落盘
-    function exportPresetFile(name: string, idx: number): void {
-        const preset = structuredClone(openai_settings[idx] as Preset);
-
-        const sensitiveFields = [
-            'reverse_proxy',
-            'proxy_password',
-            'custom_url',
-            'custom_include_body',
-            'custom_exclude_body',
-            'custom_include_headers',
-            'vertexai_region',
-            'vertexai_express_project_id',
-            'azure_base_url',
-            'azure_deployment_name',
-            'workers_ai_account_id',
-        ];
-
-        sensitiveFields.forEach(field => delete preset[field]);
-
-        if (settingsToUpdate) {
-            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
-                if (isConnection) {
-                    delete preset[settingName];
-                }
+    // 导出完整分支树 prompt_tree：收集全部 base/delta，按 root→leaf（DFS）排序，
+    // 保证每个 delta 的 baseId 祖先在其前，保留原始 id/baseId 以便导入还原。
+    function buildTreeExportData(meta: PresetMeta): string {
+        const profiles = meta.profiles.filter(p => isPromptBaseProfile(p) || isPromptDeltaProfile(p)) as (PromptBaseProfile | PromptDeltaProfile)[];
+        const childrenByParent = new Map<string, PromptDeltaProfile[]>();
+        for (const p of profiles) {
+            if (isPromptDeltaProfile(p)) {
+                const list = childrenByParent.get(p.baseId) ?? [];
+                list.push(p);
+                childrenByParent.set(p.baseId, list);
             }
         }
-
-        download(JSON.stringify(preset, null, 4), `${name}.json`, 'application/json');
+        const ordered: (PromptBaseProfile | PromptDeltaProfile)[] = [];
+        const visited = new Set<string>();
+        const visit = (p: PromptBaseProfile | PromptDeltaProfile): void => {
+            if (visited.has(p.id)) return;
+            if (isPromptDeltaProfile(p)) {
+                const parent = getProfile(meta, p.baseId);
+                if (parent && (isPromptBaseProfile(parent) || isPromptDeltaProfile(parent))) visit(parent);
+            }
+            visited.add(p.id);
+            ordered.push(p);
+            for (const child of childrenByParent.get(p.id) ?? []) visit(child);
+        };
+        for (const p of profiles) {
+            if (isPromptBaseProfile(p)) visit(p);
+        }
+        // 孤立 delta（baseId 无对应 base/delta）：随 root 树之后收尾
+        for (const p of profiles) {
+            if (!visited.has(p.id)) visit(p);
+        }
+        const exported = ordered.map(p => isPromptBaseProfile(p)
+            ? { kind: p.kind, id: p.id, name: p.name, prompts: p.prompts }
+            : { kind: p.kind, id: p.id, name: p.name, baseId: p.baseId, changes: p.changes });
+        return JSON.stringify({ kind: 'prompt_tree', formatVersion: 2, profiles: exported }, null, 4);
     }
 
     // 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）
@@ -491,12 +504,18 @@ export async function openPresetCards(): Promise<void> {
         });
     });
 
-    // ---- Export button ----
-    dialog.on('click', '.preset_card_export_btn', function (e) {
+    // ---- Export button (导出整棵分支树) ----
+    dialog.on('click', '.preset_card_export_btn', async function (e) {
         e.stopPropagation();
         const name = $(this).attr('data-preset-name') as string;
         const idx = $(this).data('preset-index') as number;
-        exportPresetFile(name, idx);
+
+        const choice = await chooseFromOptions(L('Export all configurations'), [[L('Export all configurations'), 'export']]);
+        if (choice !== 'export') return;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
     });
 
     // ---- Delete button ----
@@ -1203,7 +1222,7 @@ export async function openPresetCards(): Promise<void> {
         if (choice === 'tree') {
             // v1 快照无父链可导出，回退为单 profile 导出
             if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
-                download(buildTreeExportData(profile, meta), `${profile.name}-tree.json`, 'application/json');
+                download(buildTreeExportData(meta), `${profile.name}-tree.json`, 'application/json');
             } else {
                 download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
             }

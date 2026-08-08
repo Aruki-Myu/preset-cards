@@ -674,20 +674,6 @@
     gap: 4px;
 }
 
-.preset_card_prompt_order_warning {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin: 0 4px 8px 4px;
-    padding: 6px 10px;
-    font-size: 11px;
-    line-height: 1.4;
-    color: #e6a23c;
-    background: rgba(230, 162, 60, 0.1);
-    border: 1px solid rgba(230, 162, 60, 0.35);
-    border-radius: 6px;
-}
-
 .preset_card_add_profile_btn,
 .preset_card_import_profile_btn {
     width: 20px;

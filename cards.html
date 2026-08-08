@@ -88,12 +88,6 @@
                             </button>
                         </div>
                     </div>
-                    {{#if this.promptOrderGlobal}}
-                    <div class="preset_card_prompt_order_warning" title="{{../i18n.globalOrderWarning}}">
-                        <i class="fa-solid fa-triangle-exclamation"></i>
-                        <span>{{../i18n.globalOrderWarning}}</span>
-                    </div>
-                    {{/if}}
                     <div class="preset_card_profiles_list">
                         {{#each this.profiles}}
                         <div class="preset_card_profile_row" data-profile-id="{{this.id}}">
