@@ -1112,12 +1112,6 @@
         transform: translateX(0);
     }
     
-    .preset_card_add_profile_btn,
-    .preset_card_import_profile_btn,
-    .preset_card_export_all_btn {
-        opacity: 1;
-    }
-    
     /* Expand touch targets for icons on mobile */
     .preset_card_profile_actions i {
         padding: 4px;
