@@ -1,30 +1,68 @@
-# Preset-Cards
-新一代预设管理器，完美兼容SillyTavern
+# Preset Cards for SillyTavern
 
-## 如何使用
-安装预设成功后，点击左下角魔棒→Preset Card即可打开面板。
+> 这是 **Dev-TS** 分支：已从原生 JS 重构为 **TypeScript + Vite** 构建的 SillyTavern 第三方扩展。
+> 功能说明与完整文档见 [`Preset-cards.md`](./Preset-cards.md)。
 
-## 功能特性
-- 对预设进行AES256加密，增强Json安全性，防止贩子倒卖
-- 对预设卡片式展览，可以为每个预设创建卡片并且平铺展示，优雅美观
-- 对预设的可展示信息增强，可以为预设添加描述与适用模型
-- 支持为预设创建配置，然后打包于预设内供他人使用
+**Preset Cards** 将 ST 原生的下拉式预设管理器重做为可视化卡片网格，支持**子配置快照（Profiles）**、模型适配标签、搜索/多选批量删除、导入导出脱敏等，为经常切换模型或测试参数的玩家提供高效工作流。
 
-## 如何使用配置
-- 操作前请先确保目标预设为**Active**状态(即已经切换到该预设)，导入完预设后，调整预设完毕后，点击预设对应的卡片`配置快照`旁边的`+`输入配置名称，即可将当前预设配置存储为快照
-- 预设内的配置会展示在预设快照内，每个配置都可以进行四个操作`导出配置`、`保存`、`重命名`、`删除`
-  - 导出配置: 将配置单独导出，方便分享给其他人导入
-  - 保存: 将当前的预设配置覆盖到该快照
-  - 重命名: 重命名配置
-  - 删除: 删除该配置
+## 特性
 
-## 简洁模式
-- Prset-Card提供了简洁美观的简洁模式，点击右上角类似**全屏**按钮，即可切换。<br>
-- 切换后，所有预设将以更简洁卡片的形式展示，同时隐藏标题与描述，只在每个卡片右下角显示适配模型<br>
-  - 将鼠标或手指悬浮即可显示标题与描述，单击切换预设，长按卡片**0.5s**可呼出切换配置界面<br>
-- 同时，卡片会展示预设内设定的背景图，十分美观优雅
+- 可视化卡片网格，支持实时搜索、多选批量删除
+- 子配置快照系统（Profiles）：在单个预设下保存/一键加载多套参数状态
+- 模型适配标签：勾选适用模型并渲染厂商 Logo
+- 完整预设 / 单子配置导出导入，导出自动脱敏（剥离代理 URL、API Keys 等）
+- 原生中英双语，跟随 ST 全局语言自动切换
+- 兼容任意安装路径（`third-party` 深层目录、自定义文件夹名）
 
-## 如何加密
-首先导入json原文件，导出时选择.myu(加密格式)，输入AAD，然后即可正常导出加密后的预设(.myu格式)，与IV和密码存储文件(.pckey格式)。<br>
-pckey内不会存储AAD数据，因此每个用户在导入.myu与.pckey后还需要输入作者设置的AAD，才可正常导入解密。<br>
-请妥善保管pckey文件！确保不要丢失！
+## 分支说明
+
+| 分支 | 说明 |
+|---|---|
+| `main` | 上游原版（JS），保持与 upstream 同步 |
+| `Dev-TS` | 本分支：TypeScript 重构，`dist/` 已提交，可直接安装 |
+
+## 构建（仅开发者需要）
+
+仓库中的 `dist/index.js` 已提交，普通用户把整个目录放入 `SillyTavern/data/.../third-party/`（或 ST 的 `public/scripts/extensions/third-party/`）即可使用，无需本地构建。
+
+```bash
+npm install        # 安装依赖
+npm run build      # 生产构建 (输出 dist/index.js + sourcemap)
+npm run watch      # 开发模式：监听 src/ 变更自动重建
+npm run typecheck  # 仅做类型检查 (tsc --noEmit)
+```
+
+## 源码结构
+
+```text
+preset-cards/
+├── manifest.json       # 扩展元数据（js 指向 dist/index.js，hooks.activate = init）
+├── package.json        # 构建脚本与依赖 (Vite + TypeScript)
+├── tsconfig.json       # TypeScript 编译配置
+├── vite.config.ts      # Vite 构建配置 (@sillytavern/* 外部化解析)
+├── src/                # TypeScript 源码
+│   ├── index.ts        # 入口，导出 init() 钩子
+│   ├── constants.ts    # 常量：扩展名/LOGO/本地化字典/模型与来源映射
+│   ├── i18n.ts         # 本地化助手 L()
+│   ├── cache.ts        # IndexedDB 背景图缓存
+│   ├── meta.ts         # 预设元数据读写 (readMeta/saveMeta)
+│   ├── presetList.ts   # 视图模型构建 (buildPresetList)
+│   ├── editModal.ts    # 元数据编辑弹窗 (openEditModal)
+│   ├── presetCards.ts  # 主弹窗逻辑 (openPresetCards)
+│   ├── init.ts         # 侧栏按钮与 /presetcards 斜杠命令
+│   ├── globals.d.ts    # 全局变量声明
+│   └── types/st.d.ts   # SillyTavern 模块自包含类型声明
+├── dist/               # 构建产物 (Vite 输出，提交进 git)
+├── style.css           # UI 视觉样式
+├── cards.html          # 预设卡片网格 Handlebars 模板
+├── edit.html           # 元数据/模型标签编辑弹窗模板
+├── Preset-cards.md     # 详细功能与实现文档
+└── llm-logos/          # 各主流模型厂商的 Logo 文件
+```
+
+## 使用
+
+- 侧边栏点击 **Preset Cards**（或运行 `/presetcards`）打开卡片视图
+- 点卡片切换预设；悬停卡片显示导出 / 编辑 / 删除
+- 卡片内 **Configurations** 区管理子配置快照（新增 / 加载 / 覆盖 / 重命名 / 删除 / 导出 / 导入）
+- 工具栏支持搜索、简洁模式、多选批量删除、清理背景图缓存、导入预设
