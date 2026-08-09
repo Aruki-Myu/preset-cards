@@ -26,8 +26,8 @@
                     <i class="fa-solid fa-grip-vertical pc-drag-handle" title="{{../i18n.dragHandle}}"></i>
                     {{/if}}
                     <div class="pc-card-title">
-                        <span class="pc-card-name" title="{{this.identifier}}">{{this.name}}</span>
-                        <small class="pc-card-id">#{{this.identifier}}</small>
+                        <span class="pc-card-name" title="{{this.name}}">{{this.name}}</span>
+                        <span class="pc-role-badge role-{{this.role}}">{{this.role}}</span>
                     </div>
                     {{#if this.clearable}}
                     <button class="pc-card-clear" title="{{../i18n.clearValueChange}}">

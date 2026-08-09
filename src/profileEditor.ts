@@ -364,7 +364,7 @@ export async function openProfileEditorPopup(
         }
 
         const header = $('<div class="pc-editor-header"></div>');
-        header.append($('<h3></h3>').text('#' + identifier));
+        header.append($('<h3></h3>').text(prompt.name ?? identifier));
         const actions = $('<div class="pc-editor-actions"></div>');
 
         const prevSession = sessionEdits.get(bufferKey(name, identifier));

@@ -14,6 +14,8 @@ export interface ProfileEntryView {
     identifier: string;
     name: string;
     enabled: boolean;
+    /** 该条目的角色（profile 覆盖值优先，否则预设原值，缺省 system），仅展示用。 */
+    role?: string;
     /** 该条目的当前正文（profile 解析 fields 或预设运行时值），仅用于搜索过滤，模板不渲染正文。 */
     content?: string;
     hasFields?: boolean;
@@ -107,6 +109,7 @@ export function buildProfileEntries(
         return {
             identifier: e.identifier,
             name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
+            role: e.fields?.role ?? prompt?.role ?? 'system',
             content: e.fields?.content ?? prompt?.content,
             enabled: e.enabled,
             hasFields,
