@@ -4,14 +4,16 @@ import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
 import type { Preset, PresetProfile, PromptBaseProfile, PromptDefaultSnapshotEntry, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
 /** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。
- * injection_position 为用户可编辑字段，随 profile 捕获/应用；
- * injection_depth/order 仍为内部字段，UI 不编辑、不随 profile 捕获，
+ * injection_position / injection_depth 为用户可编辑字段，随 profile 捕获/应用
+ * （injection_depth 支持 profile-editor 弹窗的注入深度编辑）；
+ * order 仍为内部字段，UI 不编辑、不随 profile 捕获，
  * 否则加载 profile 时会用旧快照覆盖用户此后在 Prompt Manager 里调整的注入值。 */
 export const PROMPT_FIELD_WHITELIST: (keyof PromptFields)[] = [
     'content',
     'name',
     'role',
     'injection_position',
+    'injection_depth',
 ];
 
 /** 两个 PromptFields 是否逐白名单字段一致（用于判断编辑是否有净变化）。 */

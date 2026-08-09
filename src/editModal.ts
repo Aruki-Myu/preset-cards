@@ -60,20 +60,38 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
         return $(this).data('model-id') as string;
     }).get();
 
-    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot, defaultSnapshotLocked: meta.defaultSnapshotLocked });
+    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot, defaultSnapshotLocked: meta.defaultSnapshotLocked, activeProfileId: meta.activeProfileId });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
 }
 
-// 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
-// current 为「预设原值叠加已缓冲编辑」的有效当前值；缺省时以预设原值为基线预填与比对。
-export async function openPromptEditPopup(
+/** 单个 prompt 值编辑表单：表单容器 + 收集函数。
+ * 弹窗（openPromptEditPopup）与 profile-editor 右栏内联编辑共用。
+ * collectFields() 返回与基线（current）有净变化的字段；无变化返回 null。
+ * 基线 current 为「预设原值叠加已缓冲编辑」的有效当前值；缺省以预设原值预填/比对。 */
+export interface PromptEditForm {
+    container: JQuery<HTMLElement>;
+    collectFields: () => PromptFields | null;
+}
+
+/**
+ * 构造单 prompt 值编辑表单（不弹窗，由调用方决定渲染位置）。
+ * Position 下拉含 0=Relative / 1=In-chat / 2=In Chat Absolute Depth；
+ * 选中 2 时显示 Injection Depth number 输入。
+ * preset 中缺失该 prompt（防御路径）返回空表单，collectFields 恒 null。
+ */
+export function buildPromptEditForm(
     preset: Preset,
     identifier: string,
     current?: PromptFields,
-): Promise<PromptFields | null> {
+): PromptEditForm {
     const prompt = findPromptInPreset(preset, identifier);
-    if (!prompt) return null;
+    if (!prompt) {
+        return {
+            container: $('<div class="preset_cards_prompt_edit_form"></div>'),
+            collectFields: () => null,
+        };
+    }
 
     const isMarker = !!prompt.marker;
 
@@ -81,6 +99,8 @@ export async function openPromptEditPopup(
     const roleVal = current?.role !== undefined ? current.role : (prompt.role ?? 'system');
     const contentVal = current?.content !== undefined ? current.content : (prompt.content ?? '');
     const positionVal = current?.injection_position !== undefined ? current.injection_position : (prompt.injection_position ?? 0);
+    // ST DEFAULT_DEPTH=4（PromptManager.js:31）作为缺省显示值
+    const depthVal = current?.injection_depth !== undefined ? current.injection_depth : (prompt.injection_depth ?? 4);
 
     const container = $('<div class="preset_cards_prompt_edit_form"></div>');
     container.append($('<div class="preset_cards_prompt_edit_title"></div>').text(L('Edit prompt')));
@@ -111,8 +131,8 @@ export async function openPromptEditPopup(
     const positionWrap = $('<div class="preset_edit_field"></div>');
     positionWrap.append($('<label></label>').text(L('Position')));
     const positionSelect = $('<select class="text_pole"></select>');
-    // 与 ST INJECTION_POSITION 一致（PromptManager.js:37-40）：0=Relative, 1=In-chat
-    for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')]] as [string, string][]) {
+    // 0=Relative, 1=In-chat, 2=In Chat Absolute Depth（含深度编辑）
+    for (const [value, label] of [['0', L('Relative')], ['1', L('In-chat')], ['2', L('In Chat Absolute Depth')]] as [string, string][]) {
         const option = $('<option></option>').attr('value', value).text(label);
         if (value === String(positionVal)) option.attr('selected', 'selected');
         positionSelect.append(option);
@@ -121,6 +141,16 @@ export async function openPromptEditPopup(
 
     rowWrap.append(roleWrap);
     rowWrap.append(positionWrap);
+
+    // 注入深度：仅 position=2（In Chat Absolute Depth）时显示
+    const depthWrap = $('<div class="preset_edit_field preset_cards_prompt_edit_depth" style="display:none;"></div>');
+    depthWrap.append($('<label></label>').text(L('Injection Depth')));
+    const depthInput = $('<input type="number" min="1" step="1">').val(depthVal);
+    depthWrap.append(depthInput);
+    positionSelect.on('change', function () {
+        depthWrap.toggle(Number($(this).val()) === 2);
+    });
+    depthWrap.toggle(positionVal === 2);
 
     const contentWrap = $('<div class="preset_edit_field"></div>');
     contentWrap.append($('<label></label>').text(L('Content')));
@@ -132,26 +162,47 @@ export async function openPromptEditPopup(
 
     container.append(nameWrap);
     container.append(rowWrap);
+    container.append(depthWrap);
     container.append(contentWrap);
 
-    const result = await callGenericPopup(container, POPUP_TYPE.CONFIRM, '', {
+    // 只返回与当前值不同的字段，避免把默认值写进 profile
+    const collectFields = (): PromptFields | null => {
+        const fields: PromptFields = {};
+        const role = String(roleSelect.val() ?? 'system');
+        const name = String(nameInput.val() ?? '');
+        const content = String(contentInput.val() ?? '');
+        const position = Number(positionSelect.val() ?? 0);
+        const depth = Number(depthInput.val() ?? depthVal);
+
+        if (role !== roleVal) fields.role = role;
+        if (name !== nameVal) fields.name = name;
+        if (!isMarker && content !== contentVal) fields.content = content;
+        if (position !== positionVal) fields.injection_position = position;
+        if (position === 2 && depth !== depthVal) fields.injection_depth = depth;
+
+        return Object.keys(fields).length > 0 ? fields : null;
+    };
+
+    return { container, collectFields };
+}
+
+// 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
+export async function openPromptEditPopup(
+    preset: Preset,
+    identifier: string,
+    current?: PromptFields,
+): Promise<PromptFields | null> {
+    const prompt = findPromptInPreset(preset, identifier);
+    if (!prompt) return null;
+
+    const form = buildPromptEditForm(preset, identifier, current);
+
+    const result = await callGenericPopup(form.container, POPUP_TYPE.CONFIRM, '', {
         okButton: t`Save`,
         cancelButton: t`Cancel`,
         allowVerticalScrolling: true,
     });
     if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
 
-    // 只返回与当前值不同的字段，避免把默认值写进 profile
-    const fields: PromptFields = {};
-    const role = String(roleSelect.val() ?? 'system');
-    const name = String(nameInput.val() ?? '');
-    const content = String(contentInput.val() ?? '');
-    const position = Number(positionSelect.val() ?? 0);
-
-    if (role !== roleVal) fields.role = role;
-    if (name !== nameVal) fields.name = name;
-    if (!isMarker && content !== contentVal) fields.content = content;
-    if (position !== positionVal) fields.injection_position = position;
-
-    return Object.keys(fields).length > 0 ? fields : null;
+    return form.collectFields();
 }
