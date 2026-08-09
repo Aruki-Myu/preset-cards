@@ -558,7 +558,15 @@ class PCManagerCore {
             return;
         }
 
-        let html = '<h3>Staged Changes</h3><ul class="pc-diff-list">';
+        let html = `
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <h3 style="margin: 0;">Staged Changes</h3>
+            <button id="pc-btn-undo-all" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+                <i class="fa-solid fa-rotate-left"></i> 撤销全部
+            </button>
+        </div>
+        <ul class="pc-diff-list">`;
+        
         for (const diff of this.diffs) {
             html += `<li class="pc-diff-item diff-${diff.type}">
                 <span class="pc-diff-desc">${escapeHtml(diff.desc)}</span>
@@ -567,6 +575,16 @@ class PCManagerCore {
         }
         html += '</ul>';
         diffEl.html(html);
+
+        diffEl.find('#pc-btn-undo-all').on('click', () => {
+            this.transactionalState = {
+                prompts: structuredClone(this.originalState.prompts),
+                promptOrder: structuredClone(this.originalState.promptOrder),
+            };
+            this.updateListUI();
+            this.updateRightPane();
+            toastr.success('已撤销所有未提交的更改');
+        });
 
         diffEl.find('.pc-btn-undo').on('click', (e) => {
             const id = $(e.currentTarget).data('id');
