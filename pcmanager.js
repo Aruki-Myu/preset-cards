@@ -489,8 +489,27 @@ class PCManagerCore {
 
                     // Process {{trim}} (remove macro and adjacent newlines)
                     text = text.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
+                    html += escapeHtml(text);
+                } else {
+                    let escapedText = escapeHtml(text);
+                    // Highlight setvar (green)
+                    escapedText = escapedText.replace(/\{\{setvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
+                        return `<span style="background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{setvar::${name}::${val}}}</span>`;
+                    });
+                    // Highlight getvar (blue)
+                    escapedText = escapedText.replace(/\{\{getvar::([\s\S]*?)\}\}/g, (match, name) => {
+                        return `<span style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{getvar::${name}}}</span>`;
+                    });
+                    // Highlight trim (purple)
+                    escapedText = escapedText.replace(/\{\{trim\}\}/g, (match) => {
+                        return `<span style="background: rgba(168, 85, 247, 0.2); color: #c084fc; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{trim}}</span>`;
+                    });
+                    // Highlight comments (gray)
+                    escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}/g, (match, content) => {
+                        return `<span style="background: rgba(156, 163, 175, 0.2); color: #9ca3af; padding: 2px 4px; border-radius: 4px; font-style: italic;">{{//${content}}}</span>`;
+                    });
+                    html += escapedText;
                 }
-                html += escapeHtml(text);
             }
 
             html += `</div></div>`;
