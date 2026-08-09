@@ -136,6 +136,11 @@ function cssEscape(s: string): string {
     return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
+/** 手机端（窄屏 / 触摸）判定：单栏全屏列表、diff 走独立弹窗。 */
+function isMobileView(): boolean {
+    return window.matchMedia('(hover: none) and (pointer: coarse)').matches || window.innerWidth <= 500;
+}
+
 export async function openProfileEditorPopup(
     deps: ProfileEditorDeps,
     name: string,
@@ -384,6 +389,38 @@ export async function openProfileEditorPopup(
         await popupEdit.show();
     }
 
+    // 手机端（单栏）查看 staged diff：独立弹窗展示 + Undo
+    async function openDiffPopup(): Promise<void> {
+        const items = stagedItems();
+        const diffDialog = $('<div class="pc-edit-form"></div>');
+        if (items.length === 0) {
+            diffDialog.append($('<div class="pc-diff-empty"></div>').text(L('No staged changes')));
+        } else {
+            diffDialog.append($('<h3 class="pc-diff-title"></h3>').text(L('Staged Changes')));
+            const list = $('<ul class="pc-diff-list"></ul>');
+            for (const item of items) {
+                if (item.toggle) {
+                    list.append($('<li class="pc-diff-item diff-toggle"></li>')
+                        .append($('<span class="pc-diff-desc"></span>').text(`${item.label} · ${L('Switch')}: ${item.toggle.original ? L('On') : L('Off')} → ${item.toggle.target ? L('On') : L('Off')}`))
+                        .append(buildUndoBtn(item.key, item.identifier)));
+                }
+                for (const f of item.fields) {
+                    list.append($('<li class="pc-diff-item diff-modify"></li>')
+                        .append($('<span class="pc-diff-desc"></span>').text(`${item.label} · ${f.label}: ${f.from || '∅'} → ${f.to || '∅'}`))
+                        .append(buildUndoBtn(item.key, item.identifier)));
+                }
+            }
+            diffDialog.append(list);
+        }
+        const diffPopup = new Popup(diffDialog, POPUP_TYPE.TEXT, '', {
+            okButton: false,
+            cancelButton: false,
+            wide: true,
+        });
+        await diffPopup.show();
+        renderStagedPane();
+    }
+
     // 局部刷新单条 entry（名字/开关/dirty/clear 可见性）
     function refreshEntryRow(identifier: string): void {
         const row = dialog.find(`.pc-prompt-card[data-identifier="${cssEscape(identifier)}"]`);
@@ -582,7 +619,11 @@ export async function openProfileEditorPopup(
     });
 
     dialog.on('click', '#pc-btn-view-staged', function () {
-        renderStagedPane();
+        if (isMobileView()) {
+            void openDiffPopup();
+        } else {
+            renderStagedPane();
+        }
     });
 
     dialog.on('click', '#pc-btn-commit', async function () {

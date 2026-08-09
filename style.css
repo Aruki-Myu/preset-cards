@@ -1664,3 +1664,35 @@
     flex-direction: column;
     gap: 16px;
 }
+
+/* ---- PCManager 手机端：单栏全屏列表（上游手机行为） ---- */
+@media (hover: none) and (pointer: coarse), (max-width: 500px) {
+    .pc-manager-container {
+        inset: 0;
+        border-radius: 0;
+    }
+
+    .pc-layout {
+        flex-direction: column;
+    }
+
+    .pc-right-pane {
+        display: none;
+    }
+
+    .pc-left-pane {
+        flex: 1;
+    }
+
+    .pc-header h2 {
+        font-size: 1rem;
+    }
+
+    .pc-prompt-card {
+        padding: 12px 10px;
+    }
+
+    .pc-card-name {
+        font-size: 15px;
+    }
+}
