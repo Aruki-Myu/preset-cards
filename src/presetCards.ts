@@ -36,7 +36,6 @@ import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
 import { applyBufferedEdits, clearBufferedForName, type PromptEditBuffer } from './presetBuffers.js';
-import { applyDirtyHighlights } from './presetDirty.js';
 import { applyDefaultOriginalFields, lockDefaultSnapshot } from './presetSnapshot.js';
 import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
 import { openProfileEditorPopup } from './profileEditor.js';
@@ -81,7 +80,6 @@ export async function openPresetCards(): Promise<void> {
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
-        applyDirtyHighlights(dialog, sessionEdits, pendingToggles);
         if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
         dialog.find('#preset_cards_search').trigger('input');
     }
@@ -144,6 +142,9 @@ export async function openPresetCards(): Promise<void> {
         });
 
         if (!response.ok) return false;
+
+        // V2：删除预设后清理其未提交缓冲（孤儿缓冲仅会在同一会话重建同名预设时被错误套用）
+        clearBufferedForName(nameToDelete, sessionEdits, pendingToggles);
 
         opts.onDeleted?.();
 

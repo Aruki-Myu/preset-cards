@@ -243,7 +243,6 @@ export function getCardsTemplateContext() {
             configurations: L('Configurations'),
             addBaseConfig: L('Save Base Profile'),
             loadConfig: L('Load configuration'),
-            overwriteConfig: L('Overwrite with current settings'),
             exportConfig: L('Export configuration'),
             importConfig: L('Import configuration'),
             exportAll: L('Export all configurations'),
@@ -255,14 +254,6 @@ export function getCardsTemplateContext() {
             derived: L('Derived'),
             base: L('Base'),
             delta: L('Delta'),
-            hasValueChanges: L('Has value changes'),
-            noEntries: L('No entries'),
-            toggleEntry: L('Toggle entry'),
-            editPrompt: L('Edit prompt'),
-            clearValueChange: L('Clear value changes'),
-            saveChanges: L('Save changes'),
-            moveUp: L('Move up'),
-            moveDown: L('Move down'),
         }
     };
 }

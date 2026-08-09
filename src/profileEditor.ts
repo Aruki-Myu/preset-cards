@@ -4,7 +4,7 @@
 
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { oai_settings, openai_settings } from '@sillytavern/scripts/openai';
-import { POPUP_TYPE, Popup } from '@sillytavern/scripts/popup';
+import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { EXTENSION_NAME } from './constants.js';
 import { L } from './i18n.js';
 import {
@@ -62,12 +62,53 @@ export function applyBufferedAndSnapshot(
     name: string,
     sessionEdits: Map<string, PromptEditBuffer>,
     pendingToggles: Map<string, boolean>,
+    pendingClears: Map<string, true>,
 ): { identifier: string; enabled: boolean; fields?: PromptFields }[] {
     const missing = applyBufferedEdits(preset, name, sessionEdits, pendingToggles);
     if (missing.length > 0) {
         toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
     }
-    return buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name, sessionEdits) });
+    const include = editedIdentifiersForName(name, sessionEdits);
+    const prefix = bufferPrefix(name);
+    for (const key of pendingClears.keys()) {
+        if (key.startsWith(prefix)) include.add(key.slice(prefix.length));
+    }
+    const snapshot = buildPromptSnapshot(preset, { includeFields: include });
+    for (const entry of snapshot) {
+        const key = bufferKey(name, entry.identifier);
+        // R1：clear 的条目显式空 fields——delta 走 snapshotToChanges（空 fields 不产生差异、旧差异消失），
+        // base 走 mergeBaseSnapshot（保留 prior fields）后由 applyPendingClearsToProfile 补删。
+        // F2 防御：clear 后该条目已有新 session（重新编辑）则保留新值，不强置空 fields。
+        if (pendingClears.has(key) && !sessionEdits.has(key)) {
+            entry.fields = {};
+        }
+    }
+    return snapshot;
+}
+
+// R1：把「清除值变更」应用到 profile 快照：删除对应条目的 fields。
+// base 用 prompts[].fields（mergeBaseSnapshot 会保留 prior fields，须在此删除）；
+// delta 已由 snapshotToChanges 重建 changes 覆盖，此处兜底删除自身 changes 的残留 fields。
+function applyPendingClearsToProfile(
+    profile: PromptBaseProfile | PromptDeltaProfile,
+    pendingClears: Map<string, true>,
+    name: string,
+): void {
+    const prefix = bufferPrefix(name);
+    const ids = new Set<string>();
+    for (const key of pendingClears.keys()) {
+        if (key.startsWith(prefix)) ids.add(key.slice(prefix.length));
+    }
+    if (ids.size === 0) return;
+    if (isPromptBaseProfile(profile)) {
+        for (const p of profile.prompts) {
+            if (ids.has(p.identifier)) delete p.fields;
+        }
+    } else {
+        for (const c of profile.changes) {
+            if (ids.has(c.identifier)) delete c.fields;
+        }
+    }
 }
 
 /** 「保存→更新」与「覆盖」共用的 base/delta 提交：按类型合并缓冲后的快照 → 持久化 → 成功提示。
@@ -95,10 +136,10 @@ export async function commitBufferedEditsToProfile(
         if (parentEntries.length > 0) {
             profile.changes = snapshotToChanges(snapshot, parentEntries, profile.changes);
         } else if (missingParent === 'full-changes') {
-            // 父链缺失：全量写成差异（含值字段）
+            // 父链缺失：全量写成差异（含值字段）；空 fields（clear 条目）不写入（F3）
             profile.changes = snapshot.map((s) => {
                 const change: PromptDeltaChange = { identifier: s.identifier, enabled: s.enabled };
-                if (s.fields) change.fields = s.fields;
+                if (s.fields && Object.keys(s.fields).length > 0) change.fields = s.fields;
                 return change;
             });
         } else {
@@ -126,6 +167,8 @@ interface StagedItem {
     label: string;
     toggle?: { original: boolean; target: boolean };
     fields: StagedFieldChange[];
+    /** R1：本条目存在「清除值变更」待提交（commit 时删除 profile 快照 fields）。 */
+    clear?: boolean;
 }
 
 function fmtValue(v: unknown): string {
@@ -151,17 +194,11 @@ export async function openProfileEditorPopup(
     let mobileShowRight = false;
     /** 本会话拖拽重排过的条目（打脏标记，立即保存不进 diff；序号保持不更新）。 */
     const reorderedIds = new Set<string>();
-    /** 弹窗打开时的 prompt_order 快照：拖拽脏标记的基准（改回原位则清除）。 */
-    const initialOrderIndex = new Map<string, number>();
-    {
-        const preset = openai_settings[idx] as Preset;
-        const orderList = findOrderList(preset, resolvePromptOrderTarget());
-        if (Array.isArray(orderList?.order)) {
-            orderList.order.forEach((o: any, i: number) => {
-                if (o && typeof o.identifier === 'string') initialOrderIndex.set(o.identifier, i);
-            });
-        }
-    }
+    /** R1：本会话「清除值变更」缓冲（key = bufferKey(name, identifier)）；Commit 才删除 profile 快照 fields。 */
+    const pendingClears = new Map<string, true>();
+    /** 弹窗打开时的 prompt_order 快照：拖拽脏标记的基准（改回原位则清除）。
+     * R7：复用 buildProfileOrderCtx 的顺序索引构建（非活动预设返回空 map；拖拽本就仅活动预设开放）。 */
+    const initialOrderIndex = buildProfileOrderCtx(openai_settings[idx] as Preset, oai_settings.preset_settings_openai === name).orderIndex;
     let popup: Popup;
 
     // 读取当前预设/元数据/profile 解析后的展示条目（每次调用取最新内存态，clear 等直接改内存对象）
@@ -175,6 +212,8 @@ export async function openProfileEditorPopup(
         return { preset, meta, profile, entries: buildProfileEntries(profile, meta, preset, orderCtx), orderCtx };
     };
 
+    type EditorCtx = NonNullable<ReturnType<typeof currentCtx>>;
+
     const FIELD_LABELS: Record<string, string> = {
         content: L('Content'),
         name: L('Name'),
@@ -184,15 +223,17 @@ export async function openProfileEditorPopup(
     };
 
     // ---- Staged diff（当前未提交的缓冲改动：开关切换 / 值修改） ----
-    function stagedItems(): StagedItem[] {
-        const ctx = currentCtx();
-        if (!ctx) return [];
-        const nameById = new Map(ctx.entries.map((e) => [e.identifier, e.name]));
-        const enabledById = new Map(ctx.entries.map((e) => [e.identifier, e.enabled]));
+    // R9：接收外部已算好的 ctx，避免同一事件 tick 内多次全量 profile 解析（缺省时自行取最新）
+    function stagedItems(ctx?: EditorCtx): StagedItem[] {
+        const resolvedCtx = ctx ?? currentCtx();
+        if (!resolvedCtx) return [];
+        const nameById = new Map(resolvedCtx.entries.map((e) => [e.identifier, e.name]));
+        const enabledById = new Map(resolvedCtx.entries.map((e) => [e.identifier, e.enabled]));
 
         const keys = new Set<string>();
         for (const k of pendingToggles.keys()) if (k.startsWith(prefix)) keys.add(k);
         for (const k of sessionEdits.keys()) if (k.startsWith(prefix)) keys.add(k);
+        for (const k of pendingClears.keys()) if (k.startsWith(prefix)) keys.add(k);
 
         const items: StagedItem[] = [];
         for (const key of keys) {
@@ -214,6 +255,10 @@ export async function openProfileEditorPopup(
                     }
                 }
             }
+            // F2：clear 后重新编辑（session 存在）视为清除被覆盖，不渲染 clear 项
+            if (pendingClears.has(key) && !session) {
+                item.clear = true;
+            }
             items.push(item);
         }
         items.sort((a, b) => a.identifier.localeCompare(b.identifier));
@@ -224,7 +269,7 @@ export async function openProfileEditorPopup(
     async function renderDialog(): Promise<void> {
         const ctx = currentCtx();
         if (!ctx) return;
-        const items = stagedItems();
+        const items = stagedItems(ctx);
         const isDelta = isPromptDeltaProfile(ctx.profile);
         const parentName = isDelta
             ? (ctx.meta.profiles.find((p) => p.id === (ctx.profile as PromptDeltaProfile).baseId)?.name ?? '')
@@ -264,9 +309,11 @@ export async function openProfileEditorPopup(
 
         applyBufferOverlay();
         applySearch();
-        renderRightPane();
+        // R4：commit 后 renderDialog 重建模板，输入框无 value——按闭包 searchQuery 回填，与过滤结果一致
+        dialog.find('#pc-search-input').val(searchQuery);
+        renderRightPane(ctx);
         setupSortable();
-        refreshCounts();
+        refreshCounts(ctx);
     }
 
     // 把缓冲状态叠加到已渲染的条目列表（开关目标 / 编辑后的名字 / dirty 高亮）
@@ -289,7 +336,7 @@ export async function openProfileEditorPopup(
             if (session?.edited.name !== undefined) {
                 entry.find('.pc-card-name').text(session.edited.name).attr('title', identifier);
             }
-            if (sessionEdits.has(key) || pendingToggles.has(key) || reorderedIds.has(identifier)) {
+            if (sessionEdits.has(key) || pendingToggles.has(key) || pendingClears.has(key) || reorderedIds.has(identifier)) {
                 entry.addClass('dirty');
             }
         });
@@ -310,10 +357,10 @@ export async function openProfileEditorPopup(
         dialog.find('#pc-prompt-empty-search').toggle(visible === 0 && q.length > 0);
     }
 
-    function renderStagedPane(): void {
+    function renderStagedPane(ctx?: EditorCtx): void {
         const diffArea = dialog.find('#pc-diff-area');
         diffArea.empty();
-        const items = stagedItems();
+        const items = stagedItems(ctx);
         if (items.length === 0) {
             diffArea.append($('<div class="pc-diff-empty"></div>').text(L('No staged changes')));
             return;
@@ -331,29 +378,45 @@ export async function openProfileEditorPopup(
                     .append($('<span class="pc-diff-desc"></span>').text(`${item.label}: ${f.from || '∅'} → ${f.to || '∅'}`))
                     .append(buildUndoBtn(item.key, item.identifier)));
             }
+            if (item.clear) {
+                list.append($('<li class="pc-diff-item diff-clear"></li>')
+                    .append($('<span class="pc-diff-desc"></span>').text(`${item.label}: ${L('Clear value changes')}`))
+                    .append(buildUndoBtn(item.key, item.identifier, true)));
+            }
         }
         diffArea.append(list);
     }
 
-    function buildUndoBtn(key: string, identifier: string): JQuery<HTMLElement> {
+    function buildUndoBtn(key: string, identifier: string, onlyClear = false): JQuery<HTMLElement> {
         const undo = $('<button class="pc-btn-undo"></button>')
             .append($('<i class="fa-solid fa-rotate-left"></i>'))
             .append(' ' + L('Undo'));
-        undo.on('click', () => undoStaged(key, identifier));
+        undo.on('click', () => {
+            // clear 项独立 undo（仅撤销 pendingClears；profile 快照 fields 未动，恢复即自然）；
+            // toggle/值编辑项仍按原语义整体撤销
+            if (onlyClear) {
+                pendingClears.delete(key);
+            } else {
+                undoStaged(key, identifier);
+            }
+            refreshEntryRow(identifier);
+            refreshCounts();
+            renderRightPane();
+        });
         return undo;
     }
 
     // 右栏路由：有编辑目标 → 内联编辑表单；否则 staged diff。
     // 手机端（≤768px）默认右栏隐藏，mobileShowRight 时加 .pc-show-right 让右栏全宽覆盖列表。
-    function renderRightPane(): void {
+    function renderRightPane(ctx?: EditorCtx): void {
         dialog.find('.pc-layout').toggleClass('pc-show-right', mobileShowRight);
         const diffArea = dialog.find('#pc-diff-area');
         const editArea = dialog.find('#pc-edit-area');
         if (editTargetId) {
-            const ctx = currentCtx();
-            const view = ctx?.entries.find((e) => e.identifier === editTargetId);
-            if (ctx && view?.editable) {
-                editArea.empty().append(buildInlineEdit(ctx.preset, editTargetId));
+            const resolvedCtx = ctx ?? currentCtx();
+            const view = resolvedCtx?.entries.find((e) => e.identifier === editTargetId);
+            if (resolvedCtx && view?.editable) {
+                editArea.empty().append(buildInlineEdit(resolvedCtx.preset, editTargetId));
                 editArea.show();
                 diffArea.hide();
                 return;
@@ -364,7 +427,7 @@ export async function openProfileEditorPopup(
         }
         editArea.hide();
         diffArea.show();
-        renderStagedPane();
+        renderStagedPane(ctx);
     }
 
     // 内联编辑表单（PC 右栏 / 手机全宽覆盖）：复用 editModal 的表单构造，保存写会话缓冲
@@ -395,6 +458,8 @@ export async function openProfileEditorPopup(
             const editedFields = form.collectFields();
             if (editedFields) {
                 const key = bufferKey(name, identifier);
+                // F2：clear 后重新编辑视为覆盖「清除」意图
+                pendingClears.delete(key);
                 const session = sessionEdits.get(key);
                 const initial = session?.initial ?? capturePromptFields(prompt);
                 const edited = { ...(session?.edited ?? {}), ...filterFields(editedFields) };
@@ -424,11 +489,11 @@ export async function openProfileEditorPopup(
     }
 
     // 局部刷新单条 entry（名字/开关/dirty/clear 可见性）
-    function refreshEntryRow(identifier: string): void {
+    function refreshEntryRow(identifier: string, ctx?: EditorCtx): void {
         const row = dialog.find(`.pc-prompt-card[data-identifier="${cssEscape(identifier)}"]`);
         if (row.length === 0) return;
-        const ctx = currentCtx();
-        const view = ctx?.entries.find((e) => e.identifier === identifier);
+        const resolvedCtx = ctx ?? currentCtx();
+        const view = resolvedCtx?.entries.find((e) => e.identifier === identifier);
         const key = bufferKey(name, identifier);
         const toggleTarget = pendingToggles.get(key);
         const session = sessionEdits.get(key);
@@ -455,7 +520,7 @@ export async function openProfileEditorPopup(
         }
 
         row.toggleClass('disabled', !enabled);
-        row.toggleClass('dirty', sessionEdits.has(key) || pendingToggles.has(key) || reorderedIds.has(identifier));
+        row.toggleClass('dirty', sessionEdits.has(key) || pendingToggles.has(key) || pendingClears.has(key) || reorderedIds.has(identifier));
         row.toggleClass('persistent', !!view?.hasPersistentDiff);
     }
 
@@ -517,8 +582,10 @@ export async function openProfileEditorPopup(
         }).get();
         const order = orderList.order as { identifier: string }[];
         const inDom = new Set(domIds);
+        // R9：O(n) 建索引，避免 domIds.map(id => order.find(...)) 的 O(n²)
+        const byId = new Map(order.map((o) => [o.identifier, o]));
         const newOrder = [
-            ...domIds.map((id) => order.find((o) => o.identifier === id)).filter((o): o is { identifier: string } => !!o),
+            ...domIds.map((id) => byId.get(id)).filter((o): o is { identifier: string } => !!o),
             ...order.filter((o) => !inDom.has(o.identifier)),
         ];
         if (newOrder.length === order.length && newOrder.every((o, i) => o.identifier === order[i].identifier)) return;
@@ -540,13 +607,19 @@ export async function openProfileEditorPopup(
         deps.refreshActivePresetUI(name);
     }
 
-    function refreshCounts(): void {
-        const n = stagedItems().length;
+    function refreshCounts(ctx?: EditorCtx): void {
+        const n = stagedItems(ctx).length;
         dialog.find('#pc-btn-view-staged span').text(`(${n})`);
         const commitBtn = dialog.find('#pc-btn-commit');
         commitBtn.prop('disabled', n === 0);
         commitBtn.toggleClass('disabled', n === 0);
     }
+
+    // 清空当前 name 的全部会话缓冲（含 pendingClears）：commit 消费后与关闭丢弃时共用
+    const clearBuffers = (): void => {
+        clearBufferedForName(name, sessionEdits, pendingToggles);
+        pendingClears.clear();
+    };
 
     // ---- 事件（delegated，重渲染 innerHTML 后仍然有效） ----
     dialog.on('click', '.pc-prompt-card', function (e) {
@@ -582,9 +655,10 @@ export async function openProfileEditorPopup(
             pendingToggles.set(key, target);
         }
 
-        refreshEntryRow(identifier);
-        refreshCounts();
-        renderRightPane();
+        // R9：同一 tick 只解析一次 profile（刷新函数复用 ctx）
+        refreshEntryRow(identifier, ctx);
+        refreshCounts(ctx);
+        renderRightPane(ctx);
     });
 
     dialog.on('click', '.pc-card-clear', function (e) {
@@ -596,16 +670,8 @@ export async function openProfileEditorPopup(
         if (!ctx) return;
         const preset = openai_settings[idx] as Preset;
 
-        if (isPromptBaseProfile(ctx.profile)) {
-            const item = ctx.profile.prompts.find((p) => p.identifier === identifier);
-            if (item) delete item.fields;
-        } else if (isPromptDeltaProfile(ctx.profile)) {
-            const change = ctx.profile.changes.find((c) => c.identifier === identifier);
-            if (change) delete change.fields;
-        } else {
-            return;
-        }
-
+        // R1：不再直接改 profile 内存快照（否则会被拖拽 saveMeta 静默落盘、且无法进入 staged diff）；
+        // clear 记入 pendingClears 缓冲，Commit 时统一删除快照 fields
         // 撤销会话值缓冲（full undo）：还原运行时至会话初始值并镜像活动预设
         const session = sessionEdits.get(key);
         if (session) {
@@ -629,9 +695,12 @@ export async function openProfileEditorPopup(
             }
         }
 
-        renderRightPane();
-        refreshEntryRow(identifier);
-        refreshCounts();
+        pendingClears.set(key, true);
+
+        // F8：复用已取出的 ctx，避免重复全量解析
+        renderRightPane(ctx);
+        refreshEntryRow(identifier, ctx);
+        refreshCounts(ctx);
     });
 
     dialog.on('click', '#pc-btn-view-staged', function () {
@@ -651,32 +720,35 @@ export async function openProfileEditorPopup(
         const ctx = currentCtx();
         if (!ctx) return;
         if (stagedItems().length === 0) return;
+        if (!isPromptBaseProfile(ctx.profile) && !isPromptDeltaProfile(ctx.profile)) {
+            toastr.warning(L('This profile type cannot be edited with switches'));
+            return;
+        }
 
         const choice = await chooseProfileSaveTarget();
         if (!choice) return;
 
+        // V1：create 的名称输入必须先于缓冲应用——用户取消时不得改写运行时状态
+        let deltaName: string | null = null;
+        if (choice === 'create') {
+            deltaName = await Popup.show.input(L('Derived profile name:'), '');
+            if (!deltaName) return;
+        }
+
         const preset = openai_settings[idx] as Preset;
-        const snapshot = applyBufferedAndSnapshot(preset, name, sessionEdits, pendingToggles);
+        const snapshot = applyBufferedAndSnapshot(preset, name, sessionEdits, pendingToggles, pendingClears);
 
         if (choice === 'update') {
-            if (!isPromptBaseProfile(ctx.profile) && !isPromptDeltaProfile(ctx.profile)) {
-                toastr.warning(L('This profile type cannot be edited with switches'));
-                return;
-            }
+            // R1/F1：先删旧快照 fields 再提交——mergeBaseSnapshot 的 prior-copy 会把被清字段复活并随 saveMeta 落盘；
+            // delta 路径由 snapshotToChanges 重建 changes 覆盖，此处先行删除亦无害
+            applyPendingClearsToProfile(ctx.profile, pendingClears, name);
             const ok = await commitBufferedEditsToProfile(ctx.profile, snapshot, ctx.meta, name, idx, sessionEdits, 'full-changes');
             if (!ok) return;
         } else {
-            if (!isPromptBaseProfile(ctx.profile) && !isPromptDeltaProfile(ctx.profile)) {
-                toastr.warning(L('This profile type cannot be derived'));
-                return;
-            }
-            const deltaName = await Popup.show.input(L('Derived profile name:'), '');
-            if (!deltaName) return;
-
             const profiles = Array.isArray(ctx.meta.profiles) ? ctx.meta.profiles : [];
             const parentEntries = resolveProfilePrompts(ctx.profile, ctx.meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], new Set());
             const changes = snapshotToChanges(snapshot, parentEntries, isPromptDeltaProfile(ctx.profile) ? ctx.profile.changes : []);
-            profiles.push(buildDerivedProfile(ctx.profile, deltaName, changes));
+            profiles.push(buildDerivedProfile(ctx.profile, deltaName as string, changes));
             ctx.meta.profiles = profiles;
             recordDefaultOriginalFields(ctx.meta, name, sessionEdits);
             await saveMeta(name, idx, ctx.meta);
@@ -686,7 +758,7 @@ export async function openProfileEditorPopup(
         deps.refreshActivePresetUI(name);
 
         // 本批编辑已消费，清空当前 name 的记录（其他卡的缓冲保留）
-        clearBufferedForName(name, sessionEdits, pendingToggles);
+        clearBuffers();
         reorderedIds.clear();
         editTargetId = null;
         mobileShowRight = false;
@@ -720,8 +792,14 @@ export async function openProfileEditorPopup(
 
     await popup.show();
 
-    // 关闭时有未提交改动 → 提示（缓冲保留，可再打开弹窗继续）
+    // R2/F6：关闭弹窗即结束本次编辑会话。缓冲仅存内存，任何重开（点击 profile = 重新加载）都会
+    // 覆盖 preset 并清空缓冲，「缓冲保留可重开继续」不成立。无续编路径，确认与取消都清理——
+    // 保留只会让孤儿缓冲在后续 add-base 等路径被静默吸收。
     if (stagedItems().length > 0) {
-        toastr.info(L('You have uncommitted changes'));
+        const discard = await callGenericPopup(L('You have uncommitted changes. Discard them?'), POPUP_TYPE.CONFIRM);
+        if (discard) {
+            toastr.info(L('Uncommitted changes discarded'));
+        }
+        clearBuffers();
     }
 }
