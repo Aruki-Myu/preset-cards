@@ -1665,34 +1665,85 @@
     gap: 16px;
 }
 
-/* ---- PCManager 手机端：单栏全屏列表（上游手机行为） ---- */
-@media (hover: none) and (pointer: coarse), (max-width: 500px) {
+/* ---- PCManager 手机端：单栏列表 + 右栏覆盖（对齐上游 319c2da） ---- */
+.pc-mobile-nav {
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .pc-left-pane {
+        display: flex !important;
+    }
+    .pc-right-pane {
+        display: flex !important;
+    }
+    .pc-mobile-nav {
+        display: none !important;
+    }
+}
+
+@media (max-width: 768px) {
     .pc-manager-container {
-        inset: 0;
-        border-radius: 0;
+        inset: 6px;
+        padding: 12px;
+        border-radius: 10px;
     }
 
     .pc-layout {
-        flex-direction: column;
+        gap: 0;
+    }
+
+    .pc-left-pane {
+        display: flex;
+        width: 100%;
+        padding: 12px;
     }
 
     .pc-right-pane {
         display: none;
+        width: 100%;
+        padding: 12px;
     }
 
-    .pc-left-pane {
-        flex: 1;
+    .pc-layout.pc-show-right .pc-left-pane {
+        display: none !important;
+    }
+
+    .pc-layout.pc-show-right .pc-right-pane {
+        display: flex !important;
+    }
+
+    .pc-mobile-nav {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
     }
 
     .pc-header h2 {
         font-size: 1rem;
     }
+}
 
-    .pc-prompt-card {
-        padding: 12px 10px;
+@media (max-width: 768px) {
+    .pc-drag-handle-icon {
+        display: inline-block !important;
     }
 
     .pc-card-name {
-        font-size: 15px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+
+    .pc-card-id {
+        max-width: 12ch;
+        display: inline-block;
+        vertical-align: bottom;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
     }
 }

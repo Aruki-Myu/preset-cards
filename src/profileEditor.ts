@@ -4,7 +4,7 @@
 
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { oai_settings, openai_settings } from '@sillytavern/scripts/openai';
-import { POPUP_RESULT, POPUP_TYPE, Popup } from '@sillytavern/scripts/popup';
+import { POPUP_TYPE, Popup } from '@sillytavern/scripts/popup';
 import { EXTENSION_NAME } from './constants.js';
 import { L } from './i18n.js';
 import {
@@ -136,11 +136,6 @@ function cssEscape(s: string): string {
     return s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
 }
 
-/** 手机端（窄屏 / 触摸）判定：单栏全屏列表、diff 走独立弹窗。 */
-function isMobileView(): boolean {
-    return window.matchMedia('(hover: none) and (pointer: coarse)').matches || window.innerWidth <= 500;
-}
-
 export async function openProfileEditorPopup(
     deps: ProfileEditorDeps,
     name: string,
@@ -152,6 +147,8 @@ export async function openProfileEditorPopup(
 
     let dialog: JQuery<HTMLElement> = $('<div id="preset_profile_editor" class="pc-manager-container"></div>');
     let searchQuery = '';
+    let editTargetId: string | null = null;
+    let mobileShowRight = false;
     let popup: Popup;
 
     // 读取当前预设/元数据/profile 解析后的展示条目（每次调用取最新内存态，clear 等直接改内存对象）
@@ -236,6 +233,7 @@ export async function openProfileEditorPopup(
                 viewStaged: L('View Staged'),
                 commit: L('Commit'),
                 close: L('Close'),
+                backToList: L('Back to list'),
                 searchPrompts: L('Search prompts...'),
                 dragHandle: L('Drag to reorder'),
                 clearValueChange: L('Clear value changes'),
@@ -253,7 +251,7 @@ export async function openProfileEditorPopup(
 
         applyBufferOverlay();
         applySearch();
-        renderStagedPane();
+        renderRightPane();
         setupSortable();
         refreshCounts();
     }
@@ -332,12 +330,38 @@ export async function openProfileEditorPopup(
         return undo;
     }
 
-    // 独立编辑弹窗：复用 editModal 的表单构造，保存写会话缓冲
-    async function openEditPopup(preset: Preset, identifier: string): Promise<void> {
-        const prompt = findPromptInPreset(preset, identifier);
-        if (!prompt) return;
+    // 右栏路由：有编辑目标 → 内联编辑表单；否则 staged diff。
+    // 手机端（≤768px）默认右栏隐藏，mobileShowRight 时加 .pc-show-right 让右栏全宽覆盖列表。
+    function renderRightPane(): void {
+        dialog.find('.pc-layout').toggleClass('pc-show-right', mobileShowRight);
+        const diffArea = dialog.find('#pc-diff-area');
+        const editArea = dialog.find('#pc-edit-area');
+        if (editTargetId) {
+            const ctx = currentCtx();
+            const view = ctx?.entries.find((e) => e.identifier === editTargetId);
+            if (ctx && view?.editable) {
+                editArea.empty().append(buildInlineEdit(ctx.preset, editTargetId));
+                editArea.show();
+                diffArea.hide();
+                return;
+            }
+            // 条目不可编辑（system_prompt / marker / 缺失）→ 回退 staged 视图
+            editTargetId = null;
+            mobileShowRight = false;
+        }
+        editArea.hide();
+        diffArea.show();
+        renderStagedPane();
+    }
 
-        const editDialog = $('<div class="pc-edit-form"></div>');
+    // 内联编辑表单（PC 右栏 / 手机全宽覆盖）：复用 editModal 的表单构造，保存写会话缓冲
+    function buildInlineEdit(preset: Preset, identifier: string): JQuery<HTMLElement> {
+        const prompt = findPromptInPreset(preset, identifier);
+        const wrap = $('<div class="pc-edit-form"></div>');
+        if (!prompt) {
+            wrap.append($('<div class="pc-diff-empty"></div>').text(L('No entries')));
+            return wrap;
+        }
 
         const header = $('<div class="pc-editor-header"></div>');
         header.append($('<h3></h3>').text('#' + identifier));
@@ -354,13 +378,6 @@ export async function openProfileEditorPopup(
             .append($('<i class="fa-solid fa-times"></i>'))
             .append(' ' + L('Cancel'));
 
-        const popupEdit = new Popup(editDialog, POPUP_TYPE.TEXT, '', {
-            okButton: false,
-            cancelButton: false,
-            wide: true,
-            large: true,
-        });
-
         saveBtn.on('click', () => {
             const editedFields = form.collectFields();
             if (editedFields) {
@@ -374,51 +391,23 @@ export async function openProfileEditorPopup(
                     sessionEdits.set(key, { initial, edited });
                 }
             }
-            popupEdit.complete(POPUP_RESULT.OK);
+            editTargetId = null;
+            mobileShowRight = false;
             refreshEntryRow(identifier);
             refreshCounts();
-            renderStagedPane();
+            renderRightPane();
         });
-        cancelBtn.on('click', () => popupEdit.completeCancelled());
+        cancelBtn.on('click', () => {
+            editTargetId = null;
+            mobileShowRight = false;
+            renderRightPane();
+        });
 
         actions.append(saveBtn).append(cancelBtn);
         header.append(actions);
-        editDialog.append(header);
-        editDialog.append(form.container);
-
-        await popupEdit.show();
-    }
-
-    // 手机端（单栏）查看 staged diff：独立弹窗展示 + Undo
-    async function openDiffPopup(): Promise<void> {
-        const items = stagedItems();
-        const diffDialog = $('<div class="pc-edit-form"></div>');
-        if (items.length === 0) {
-            diffDialog.append($('<div class="pc-diff-empty"></div>').text(L('No staged changes')));
-        } else {
-            diffDialog.append($('<h3 class="pc-diff-title"></h3>').text(L('Staged Changes')));
-            const list = $('<ul class="pc-diff-list"></ul>');
-            for (const item of items) {
-                if (item.toggle) {
-                    list.append($('<li class="pc-diff-item diff-toggle"></li>')
-                        .append($('<span class="pc-diff-desc"></span>').text(`${item.label} · ${L('Switch')}: ${item.toggle.original ? L('On') : L('Off')} → ${item.toggle.target ? L('On') : L('Off')}`))
-                        .append(buildUndoBtn(item.key, item.identifier)));
-                }
-                for (const f of item.fields) {
-                    list.append($('<li class="pc-diff-item diff-modify"></li>')
-                        .append($('<span class="pc-diff-desc"></span>').text(`${item.label} · ${f.label}: ${f.from || '∅'} → ${f.to || '∅'}`))
-                        .append(buildUndoBtn(item.key, item.identifier)));
-                }
-            }
-            diffDialog.append(list);
-        }
-        const diffPopup = new Popup(diffDialog, POPUP_TYPE.TEXT, '', {
-            okButton: false,
-            cancelButton: false,
-            wide: true,
-        });
-        await diffPopup.show();
-        renderStagedPane();
+        wrap.append(header);
+        wrap.append(form.container);
+        return wrap;
     }
 
     // 局部刷新单条 entry（名字/开关/dirty/clear 可见性）
@@ -484,7 +473,7 @@ export async function openProfileEditorPopup(
         }
         refreshEntryRow(identifier);
         refreshCounts();
-        renderStagedPane();
+        renderRightPane();
     }
 
     // 拖拽排序：仅活动预设可拖；拖拽后立即落盘（不进 diff）
@@ -541,7 +530,9 @@ export async function openProfileEditorPopup(
         const ctx = currentCtx();
         const view = ctx?.entries.find((x) => x.identifier === identifier);
         if (!view?.editable) return; // system_prompt / marker 不渲染编辑
-        void openEditPopup(ctx!.preset, identifier);
+        editTargetId = identifier;
+        mobileShowRight = true;
+        renderRightPane();
     });
 
     dialog.on('click', '.pc-btn-toggle', function (e) {
@@ -568,7 +559,7 @@ export async function openProfileEditorPopup(
 
         refreshEntryRow(identifier);
         refreshCounts();
-        renderStagedPane();
+        renderRightPane();
     });
 
     dialog.on('click', '.pc-card-clear', function (e) {
@@ -613,17 +604,22 @@ export async function openProfileEditorPopup(
             }
         }
 
-        renderStagedPane();
+        renderRightPane();
         refreshEntryRow(identifier);
         refreshCounts();
     });
 
     dialog.on('click', '#pc-btn-view-staged', function () {
-        if (isMobileView()) {
-            void openDiffPopup();
-        } else {
-            renderStagedPane();
-        }
+        editTargetId = null;
+        mobileShowRight = true;
+        renderRightPane();
+    });
+
+    // 手机端「返回列表」
+    dialog.on('click', '#pc-btn-mobile-back', function () {
+        editTargetId = null;
+        mobileShowRight = false;
+        renderRightPane();
     });
 
     dialog.on('click', '#pc-btn-commit', async function () {
@@ -666,6 +662,8 @@ export async function openProfileEditorPopup(
 
         // 本批编辑已消费，清空当前 name 的记录（其他卡的缓冲保留）
         clearBufferedForName(name, sessionEdits, pendingToggles);
+        editTargetId = null;
+        mobileShowRight = false;
 
         // 重渲染弹窗（diff 清空）+ 刷新卡片网格
         await renderDialog();
