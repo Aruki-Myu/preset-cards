@@ -271,8 +271,7 @@ class PCManagerCore {
         // Initialize Sortable
         if (listEl.sortable('instance')) listEl.sortable('destroy');
         if (!isSearching) {
-            listEl.sortable({
-                handle: '.pc-drag-handle',
+            const sortableOptions = {
                 delay: getSortableDelay(),
                 animation: 150,
                 ghostClass: 'pc-sortable-ghost',
@@ -288,7 +287,15 @@ class PCManagerCore {
                     }).filter(Boolean);
                     this.updateRightPane();
                 }
-            });
+            };
+            
+            // 仅在移动端使用手柄隔离，以解决无法触摸滑动列表的问题。桌面端恢复全卡片可拖动。
+            if (window.innerWidth <= 768) {
+                sortableOptions.handle = '.pc-drag-handle';
+            }
+            
+            listEl.sortable(sortableOptions);
+        }
         }
 
         // Event Listeners
