@@ -1,6 +1,6 @@
 import { oai_settings, openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
-import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetProfile, type PromptBaseProfile, type PromptDeltaProfile } from './meta.js';
+import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetMeta, type PresetProfile, type PromptBaseProfile, type PromptDeltaProfile } from './meta.js';
 import { findOrderList, resolveProfilePrompts, resolvePromptOrderTarget } from './promptToggle.js';
 import { L } from './i18n.js';
 
@@ -14,6 +14,8 @@ export interface ProfileEntryView {
     identifier: string;
     name: string;
     enabled: boolean;
+    /** 该条目的当前正文（profile 解析 fields 或预设运行时值），仅用于搜索过滤，模板不渲染正文。 */
+    content?: string;
     hasFields?: boolean;
     /** 本 profile 自身存有的持久差异（base 看 prompts[].fields；delta 看自身 changes 的 fields 或 enabled 开关差异）。 */
     hasPersistentDiff?: boolean;
@@ -51,6 +53,85 @@ function truncate(str: string, max: number): string {
     return str.length > max ? '…' + str.slice(-(max - 1)) : str;
 }
 
+/** 顺序编辑上下文：目标 prompt_order 条目的顺序索引与长度（仅活动预设有效）。 */
+export interface ProfileOrderCtx {
+    orderIndex: Map<string, number>;
+    orderLength: number;
+}
+
+/** 构建顺序编辑上下文：global → 100001；character → 活动角色 id（策略感知）。
+ * 非活动预设返回空上下文（顺序编辑仅对活动预设开放）。 */
+export function buildProfileOrderCtx(preset: Preset, isActive: boolean): ProfileOrderCtx {
+    const orderIndex = new Map<string, number>();
+    let orderLength = 0;
+    if (isActive && Array.isArray(preset.prompt_order)) {
+        const orderList = findOrderList(preset, resolvePromptOrderTarget());
+        if (Array.isArray(orderList?.order)) {
+            orderLength = orderList.order.length;
+            orderList.order.forEach((o: any, i: number) => {
+                if (o && typeof o.identifier === 'string') orderIndex.set(o.identifier, i);
+            });
+        }
+    }
+    return { orderIndex, orderLength };
+}
+
+/** 构建单个 profile 的展示条目列表（卡片与 profile-editor 弹窗共用）。
+ * 展示 = 递归解析 parent 链的完整开关 + 值字段；name/content 供弹窗搜索。 */
+export function buildProfileEntries(
+    profile: PresetProfile,
+    meta: PresetMeta,
+    preset: Preset,
+    orderCtx: ProfileOrderCtx = { orderIndex: new Map(), orderLength: 0 },
+): ProfileEntryView[] {
+    if (!isPromptBaseProfile(profile) && !isPromptDeltaProfile(profile)) return [];
+
+    const promptNames = new Map<string, string>();
+    const promptLookup = new Map<string, any>();
+    if (Array.isArray(preset.prompts)) {
+        for (const p of preset.prompts) {
+            if (p && typeof p.identifier === 'string' && p.identifier) {
+                promptLookup.set(p.identifier, p);
+                if (typeof p.name === 'string') {
+                    promptNames.set(p.identifier, p.name);
+                }
+            }
+        }
+    }
+
+    const resolved = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], new Set());
+    return resolved.map((e) => {
+        const prompt = promptLookup.get(e.identifier);
+        const hasFields = !!e.fields && Object.keys(e.fields).length > 0;
+        const orderIdx = orderCtx.orderIndex.get(e.identifier);
+        return {
+            identifier: e.identifier,
+            name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
+            content: e.fields?.content ?? prompt?.content,
+            enabled: e.enabled,
+            hasFields,
+            // hasFields 基于 resolveProfilePrompts（递归合并父链）→ 含继承自父 profile 的 fields；
+            // hasPersistentDiff 仅本 profile 自身差异：base 取自身 prompts[].fields（= hasFields），
+            // delta 取自身 changes 里的 fields/enabled，父链继承的差异不属于本 profile。
+            // 故「子 delta 有继承值差异 → 有铅笔（hasFields）无琥珀（hasPersistentDiff）」为预期行为。
+            hasPersistentDiff: isPromptDeltaProfile(profile)
+                ? profile.changes.some((c) => c.identifier === e.identifier
+                    && (c.enabled !== undefined || (c.fields && Object.keys(c.fields).length > 0)))
+                : hasFields,
+            // base 的 fields 即自身值变更；delta 需自身 changes 里有 fields（父链继承的不可由本 profile 清除）
+            clearable: isPromptDeltaProfile(profile)
+                ? profile.changes.some((c) => c.identifier === e.identifier && c.fields && Object.keys(c.fields).length > 0)
+                : hasFields,
+            // system_prompt / marker 条目不渲染编辑入口；预设中缺失的条目也无法编辑
+            editable: !!prompt && !prompt.system_prompt && !prompt.marker,
+            // 顺序编辑仅对活动预设开放（重排非活动预设的 prompt_order 无意义）
+            orderable: orderIdx !== undefined,
+            canMoveUp: orderIdx !== undefined && orderIdx > 0,
+            canMoveDown: orderIdx !== undefined && orderIdx < orderCtx.orderLength - 1,
+        };
+    });
+}
+
 /**
  * Build the template-friendly preset list.
  */
@@ -65,18 +146,7 @@ export function buildPresetList(): PresetCardModel[] {
         const isActive = name === currentPresetName;
 
         // 顺序编辑目标条目：global → 100001；character → 活动角色 id（策略感知，见 promptToggle）。
-        const orderTarget = resolvePromptOrderTarget();
-        const orderIndex = new Map<string, number>();
-        let orderLength = 0;
-        if (isActive && Array.isArray(preset.prompt_order)) {
-            const orderList = findOrderList(preset, orderTarget);
-            if (Array.isArray(orderList?.order)) {
-                orderLength = orderList.order.length;
-                orderList.order.forEach((o: any, i: number) => {
-                    if (o && typeof o.identifier === 'string') orderIndex.set(o.identifier, i);
-                });
-            }
-        }
+        const orderCtx = buildProfileOrderCtx(preset, isActive);
 
         const source = String(preset['chat_completion_source'] ?? '');
         const sourceLabel = SOURCE_LABELS[source] || '';
@@ -95,19 +165,6 @@ export function buildPresetList(): PresetCardModel[] {
 
         // Decorate each profile row with a type indicator so cards.html can render
         // [Base] / [Delta] badges, the derive button, and expandable entry list.
-        const promptNames = new Map<string, string>();
-        const promptLookup = new Map<string, any>();
-        if (Array.isArray(preset.prompts)) {
-            for (const p of preset.prompts) {
-                if (p && typeof p.identifier === 'string' && p.identifier) {
-                    promptLookup.set(p.identifier, p);
-                    if (typeof p.name === 'string') {
-                        promptNames.set(p.identifier, p.name);
-                    }
-                }
-            }
-        }
-
         type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; parentName: string; entries: ProfileEntryView[] };
         const profiles: PresetProfile[] = (Array.isArray(meta.profiles) ? meta.profiles : []).map((p) => {
             let entries: ProfileEntryView[] = [];
@@ -118,37 +175,8 @@ export function buildPresetList(): PresetCardModel[] {
                         .find((b) => b.id === p.baseId);
                     if (parent) parentName = parent.name;
                 }
-                // 展示 = 递归解析 parent 链的完整开关 + 值字段（base 与 delta 统一走 resolveProfilePrompts）
-                const resolved = resolveProfilePrompts(p, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-                entries = resolved.map((e) => {
-                    const prompt = promptLookup.get(e.identifier);
-                    const hasFields = !!e.fields && Object.keys(e.fields).length > 0;
-                    const orderIdx = orderIndex.get(e.identifier);
-                    return {
-                        identifier: e.identifier,
-                        name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
-                        enabled: e.enabled,
-                        hasFields,
-                        // hasFields 基于 resolveProfilePrompts（递归合并父链）→ 含继承自父 profile 的 fields；
-                        // hasPersistentDiff 仅本 profile 自身差异：base 取自身 prompts[].fields（= hasFields），
-                        // delta 取自身 changes 里的 fields/enabled，父链继承的差异不属于本 profile。
-                        // 故「子 delta 有继承值差异 → 有铅笔（hasFields）无琥珀（hasPersistentDiff）」为预期行为。
-                        hasPersistentDiff: isPromptDeltaProfile(p)
-                            ? p.changes.some((c) => c.identifier === e.identifier
-                                && (c.enabled !== undefined || (c.fields && Object.keys(c.fields).length > 0)))
-                            : hasFields,
-                        // base 的 fields 即自身值变更；delta 需自身 changes 里有 fields（父链继承的不可由本 profile 清除）
-                        clearable: isPromptDeltaProfile(p)
-                            ? p.changes.some((c) => c.identifier === e.identifier && c.fields && Object.keys(c.fields).length > 0)
-                            : hasFields,
-                        // system_prompt / marker 条目不渲染编辑入口；预设中缺失的条目也无法编辑
-                        editable: !!prompt && !prompt.system_prompt && !prompt.marker,
-                        // 顺序编辑仅对活动预设开放（重排非活动预设的 prompt_order 无意义）
-                        orderable: orderIdx !== undefined,
-                        canMoveUp: orderIdx !== undefined && orderIdx > 0,
-                        canMoveDown: orderIdx !== undefined && orderIdx < orderLength - 1,
-                    };
-                });
+                // 展示 = 递归解析 parent 链的完整开关 + 值字段（base 与 delta 统一走 buildProfileEntries）
+                entries = buildProfileEntries(p, meta, preset, orderCtx);
             }
             const row: ProfileRow = {
                 ...p,

@@ -1,0 +1,53 @@
+<div id="preset_profile_editor">
+    <div class="preset_profile_editor_header">
+        <div class="preset_profile_editor_title_area">
+            <div class="preset_profile_editor_title">
+                {{#if isBase}}<span class="preset_card_profile_badge badge_base">{{i18n.base}}</span>{{/if}}
+                {{#if isDelta}}{{#if parentName}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{i18n.delta}}</span>{{/if}}{{/if}}
+                <span class="preset_profile_editor_profile_name" title="{{profileName}}">{{profileName}}</span>
+            </div>
+            <div class="preset_profile_editor_subtitle" title="{{presetName}}">{{presetName}}</div>
+        </div>
+        <div class="preset_profile_editor_actions">
+            <button id="preset_profile_editor_view_staged" class="menu_button" title="{{i18n.viewStaged}}">{{i18n.viewStaged}} ({{stagedCount}})</button>
+            <button id="preset_profile_editor_commit" class="menu_button" title="{{i18n.commit}}" {{#unless canCommit}}disabled{{/unless}}>{{i18n.commit}}</button>
+            <button id="preset_profile_editor_close" class="menu_button" title="{{i18n.close}}">{{i18n.close}}</button>
+        </div>
+    </div>
+    <div class="preset_profile_editor_body">
+        <div class="preset_profile_editor_left">
+            <div class="preset_profile_editor_search_wrapper">
+                <i class="fa-solid fa-magnifying-glass search_icon"></i>
+                <input type="text" id="preset_profile_editor_search" placeholder="{{i18n.searchPrompts}}" />
+            </div>
+            <div class="preset_profile_editor_list">
+                {{#each entries}}
+                <div class="preset_profile_entry {{#if this.hasPersistentDiff}}persistent{{/if}}" data-identifier="{{this.identifier}}">
+                    <i class="fa-solid fa-grip-vertical preset_profile_entry_handle" title="{{../i18n.dragHandle}}"></i>
+                    <div class="preset_profile_entry_name_wrap">
+                        <div class="preset_profile_entry_name" title="{{this.identifier}}">{{this.name}}</div>
+                        <div class="preset_profile_entry_identifier">#{{this.identifier}}</div>
+                    </div>
+                    {{#if this.clearable}}
+                    <button class="preset_profile_entry_clear" title="{{../i18n.clearValueChange}}">
+                        <i class="fa-solid fa-eraser"></i>
+                    </button>
+                    {{/if}}
+                    {{#if this.editable}}
+                    <span class="preset_profile_entry_toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../i18n.toggleEntry}}">
+                        {{#if this.enabled}}<i class="fa-solid fa-toggle-on"></i>{{else}}<i class="fa-solid fa-toggle-off"></i>{{/if}}
+                    </span>
+                    {{/if}}
+                </div>
+                {{/each}}
+                {{#unless entries.length}}
+                <div class="preset_profile_entry_empty">{{i18n.noEntries}}</div>
+                {{/unless}}
+                <div id="preset_profile_editor_empty_search" class="preset_profile_entry_empty" style="display:none;">{{i18n.noSearchResults}}</div>
+            </div>
+        </div>
+        <div class="preset_profile_editor_right">
+            <div id="preset_profile_editor_pane" class="preset_profile_editor_pane"></div>
+        </div>
+    </div>
+</div>

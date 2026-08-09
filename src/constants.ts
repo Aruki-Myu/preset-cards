@@ -118,6 +118,22 @@ export const LOCAL_DICT: Record<string, string> = {
     'Legacy v1 profiles are not included in the tree export': '旧版 v1 配置快照不包含在关系链导出中',
     'Missing prompts skipped': '缺失的 prompt 已跳过',
     'This will also delete the following derived configurations': '将一并删除以下派生配置',
+    'In Chat Absolute Depth': '对话内绝对深度',
+    'Injection Depth': '注入深度',
+    'View Staged': '查看暂存',
+    'Commit': '提交',
+    'Close': '关闭',
+    'Search prompts...': '搜索 prompts...',
+    'Drag to reorder': '拖拽排序',
+    'Staged Changes': '暂存更改',
+    'No staged changes': '暂无暂存更改',
+    'Undo': '撤销',
+    'Switch': '开关',
+    'On': '开',
+    'Off': '关',
+    'You have uncommitted changes': '您还有未提交的更改',
+    'Save': '保存',
+    'No prompts found': '未找到匹配的 prompt',
 };
 
 export interface ModelDef {

@@ -70,6 +70,15 @@ declare module '@sillytavern/scripts/popup' {
     ): Promise<string | null>;
     export class Popup {
         static show: Record<string, (...args: any[]) => Promise<any>>;
+        constructor(
+            content: JQuery<HTMLElement> | string,
+            type: string,
+            inputValue?: string,
+            popupOptions?: Record<string, any>,
+        );
+        show(): Promise<string | null>;
+        complete(result: string | number): Promise<void>;
+        completeCancelled(): Promise<void>;
     }
 }
 
