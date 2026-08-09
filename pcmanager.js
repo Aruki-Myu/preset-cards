@@ -660,10 +660,10 @@ class PCManagerCore {
                 <label>位置</label>
                 <select class="pc-form-control" id="pc-edit-inj-pos" ${isHistory ? 'disabled' : ''}>
                     <option value="0" ${prompt.injection_position === 0 ? 'selected' : ''}>相对</option>
-                    <option value="2" ${prompt.injection_position === 2 ? 'selected' : ''}>插D</option>
+                    <option value="1" ${prompt.injection_position === 1 ? 'selected' : ''}>插D</option>
                 </select>
             </div>
-            <div class="pc-form-group" id="pc-edit-inj-depth-grp" style="display: ${prompt.injection_position === 2 ? 'flex' : 'none'};">
+            <div class="pc-form-group" id="pc-edit-inj-depth-grp" style="display: ${prompt.injection_position === 1 ? 'flex' : 'none'};">
                 <label>注入深度</label>
                 <input type="number" class="pc-form-control" id="pc-edit-inj-depth" value="${prompt.injection_depth ?? 4}" min="0" ${isHistory ? 'disabled' : ''}>
             </div>
@@ -678,7 +678,7 @@ class PCManagerCore {
         `);
 
         editEl.find('#pc-edit-inj-pos').on('change', function () {
-            if ($(this).val() == '2') {
+            if ($(this).val() == '1') {
                 editEl.find('#pc-edit-inj-depth-grp').show();
             } else {
                 editEl.find('#pc-edit-inj-depth-grp').hide();
@@ -697,7 +697,7 @@ class PCManagerCore {
             if (!isHistory) {
                 prompt.role = editEl.find('#pc-edit-role').val();
                 prompt.injection_position = Number(editEl.find('#pc-edit-inj-pos').val());
-                if (prompt.injection_position === 2) {
+                if (prompt.injection_position === 1) {
                     prompt.injection_depth = Number(editEl.find('#pc-edit-inj-depth').val());
                 } else {
                     delete prompt.injection_depth;
