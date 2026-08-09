@@ -1716,97 +1716,330 @@ export function init() {
     }));
 
     // ─────────────────────────────────────────
-    // Layer 1: Monkey-patch PromptManager.renderPromptManagerListItems with WASM
+    // Layer 1: Monkey-patch PromptManager with pure JS fast-path
     // ─────────────────────────────────────────
-    if (wasmInitialized && build_prompt_manager_list_html) {
-        const patchPM = () => {
-            const pm = promptManager;
-            if (!pm) return;
+    const patchPM = () => {
+        const pm = promptManager;
+        if (!pm) return;
 
-            const originalRenderListItems = pm.renderPromptManagerListItems.bind(pm);
+        const originalRenderListItems = pm.renderPromptManagerListItems.bind(pm);
 
-            pm.renderPromptManagerListItems = async function () {
-                if (!this.serviceSettings?.prompts || !this.listElement) {
-                    return originalRenderListItems();
-                }
+        pm.renderPromptManagerListItems = async function () {
+            if (!this.serviceSettings?.prompts || !this.listElement) {
+                return originalRenderListItems();
+            }
 
-                try {
-                    console.time('WASM_PM_Render');
+            try {
+                console.time('JS_PM_Render');
 
-                    const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
-                    const counts = this.tokenHandler?.getCounts() || {};
+                const prefix = this.configuration.prefix;
+                let htmlStr = `
+                    <li class="${prefix}prompt_manager_prompt_header">
+                        <span class="${prefix}prompt_manager_prompt_name" data-i18n="Prompt Name">Prompt Name</span>
+                        <span class="${prefix}prompt_manager_prompt_controls"></span>
+                        <span class="${prefix}prompt_manager_prompt_tokens" data-i18n="Tokens">Tokens</span>
+                    </li>
+                `;
 
-                    const tokenBudget = (this.serviceSettings.openai_max_context || 0) - (this.serviceSettings.openai_max_tokens || 0);
+                const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
+                const counts = this.tokenHandler?.getCounts() || {};
+                const tokenBudget = (this.serviceSettings.openai_max_context || 0) - (this.serviceSettings.openai_max_tokens || 0);
 
-                    const config = {
-                        prefix: this.configuration.prefix,
-                        overridden_prompts: Array.isArray(this.overriddenPrompts) ? this.overriddenPrompts : [],
-                        toggle_disabled: this.configuration.toggleDisabled || [],
-                        warning_token_threshold: this.configuration.warningTokenThreshold || 1500,
-                        danger_token_threshold: this.configuration.dangerTokenThreshold || 500,
-                        token_budget: tokenBudget,
-                        token_usage: this.tokenUsage || 0,
+                const escapeFn = (str) => {
+                    const div = document.createElement('div');
+                    div.innerText = str;
+                    return div.innerHTML;
+                };
+
+                this.getPromptsForCharacter(this.activeCharacter).forEach(prompt => {
+                    if (!prompt) return;
+
+                    const listEntry = this.getPromptOrderEntry(this.activeCharacter, prompt.identifier) || { enabled: true };
+                    const enabledClass = listEntry.enabled ? '' : `${prefix}prompt_manager_prompt_disabled`;
+                    const draggableClass = `${prefix}prompt_manager_prompt_draggable`;
+                    const markerClass = prompt.marker ? `${prefix}prompt_manager_marker` : '';
+                    const tokens = counts[prompt.identifier] ?? 0;
+
+                    let warningClass = '';
+                    let warningTitle = '';
+                    if (this.tokenUsage > tokenBudget * 0.8 && 'chatHistory' === prompt.identifier) {
+                        const warningThreshold = this.configuration.warningTokenThreshold || 1500;
+                        const dangerThreshold = this.configuration.dangerTokenThreshold || 500;
+                        if (tokens <= dangerThreshold) {
+                            warningClass = 'fa-solid tooltip fa-triangle-exclamation text_danger';
+                            warningTitle = 'Very little of your chat history is being sent, consider deactivating some other prompts.';
+                        } else if (tokens <= warningThreshold) {
+                            warningClass = 'fa-solid tooltip fa-triangle-exclamation text_warning';
+                            warningTitle = 'Only a few messages worth chat history are being sent.';
+                        }
+                    }
+
+                    const calculatedTokens = tokens ? tokens : '-';
+
+                    let detachSpanHtml = '<span class="fa-solid"></span>';
+                    if (this.isPromptDeletionAllowed(prompt)) {
+                        detachSpanHtml = `<span title="Remove" class="prompt-manager-detach-action caution fa-solid fa-chain-broken fa-xs"></span>`;
+                    }
+
+                    let editSpanHtml = '<span class="fa-solid"></span>';
+                    if (this.isPromptEditAllowed(prompt)) {
+                        editSpanHtml = `<span title="edit" class="prompt-manager-edit-action fa-solid fa-pencil fa-xs"></span>`;
+                    }
+
+                    let toggleSpanHtml = '<span class="fa-solid"></span>';
+                    if (this.isPromptToggleAllowed(prompt)) {
+                        toggleSpanHtml = `<span class="prompt-manager-toggle-action ${listEntry.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>`;
+                    }
+
+                    const encodedName = escapeFn(prompt.name || '');
+                    // 1 = INJECTION_POSITION.ABSOLUTE
+                    const isInjectionPrompt = prompt.injection_position === 1;
+                    const isMarkerPrompt = prompt.marker && !isInjectionPrompt;
+                    const isSystemPrompt = !prompt.marker && prompt.system_prompt && !isInjectionPrompt && !prompt.forbid_overrides;
+                    const isImportantPrompt = !prompt.marker && prompt.system_prompt && !isInjectionPrompt && prompt.forbid_overrides;
+                    const isUserPrompt = !prompt.marker && !prompt.system_prompt && !isInjectionPrompt;
+                    const isOverriddenPrompt = Array.isArray(this.overriddenPrompts) && this.overriddenPrompts.includes(prompt.identifier);
+                    const importantClass = isImportantPrompt ? `${prefix}prompt_manager_important` : '';
+
+                    const iconLookup = prompt.role === 'system' && (prompt.marker || prompt.system_prompt) ? '' : prompt.role;
+                    const promptRoles = {
+                        assistant: { roleIcon: 'fa-robot', roleTitle: 'Prompt will be sent as Assistant' },
+                        user: { roleIcon: 'fa-user', roleTitle: 'Prompt will be sent as User' },
                     };
+                    const roleIcon = promptRoles[iconLookup]?.roleIcon || '';
+                    const roleTitle = promptRoles[iconLookup]?.roleTitle || '';
 
-                    const htmlStr = build_prompt_manager_list_html(
-                        JSON.stringify(this.serviceSettings.prompts),
-                        JSON.stringify(promptOrder),
-                        JSON.stringify(counts),
-                        JSON.stringify(config),
-                    );
+                    let nameSpanHtml = '';
+                    if (isMarkerPrompt) nameSpanHtml += '<span class="fa-fw fa-solid fa-thumb-tack" title="Marker"></span>\n';
+                    if (isSystemPrompt) nameSpanHtml += '<span class="fa-fw fa-solid fa-square-poll-horizontal" title="Global Prompt"></span>\n';
+                    if (isImportantPrompt) nameSpanHtml += '<span class="fa-fw fa-solid fa-star" title="Important Prompt"></span>\n';
+                    if (isUserPrompt) nameSpanHtml += '<span class="fa-fw fa-solid fa-asterisk" title="Preset Prompt"></span>\n';
+                    if (isInjectionPrompt) nameSpanHtml += '<span class="fa-fw fa-solid fa-syringe" title="In-Chat Injection"></span>\n';
 
-                    this.listElement.innerHTML = '';
-                    this.listElement.insertAdjacentHTML('beforeend', htmlStr);
+                    if (this.isPromptInspectionAllowed(prompt)) {
+                        nameSpanHtml += `<a title="${encodedName}" class="prompt-manager-inspect-action">${encodedName}</a>\n`;
+                    } else {
+                        nameSpanHtml += `<span title="${encodedName}">${encodedName}</span>\n`;
+                    }
 
-                    // Re-bind event listeners (same as original)
-                    Array.from(this.listElement.getElementsByClassName('prompt-manager-detach-action')).forEach(el => {
-                        el.addEventListener('click', this.handleDetach);
-                    });
-                    Array.from(this.listElement.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
-                        el.addEventListener('click', this.handleInspect);
-                    });
-                    Array.from(this.listElement.getElementsByClassName('prompt-manager-edit-action')).forEach(el => {
-                        el.addEventListener('click', this.handleEdit);
-                    });
-                    Array.from(this.listElement.querySelectorAll('.prompt-manager-toggle-action')).forEach(el => {
-                        el.addEventListener('click', this.handleToggle);
-                    });
+                    if (roleIcon) {
+                        nameSpanHtml += `<span data-role="${escapeFn(String(prompt.role))}" class="fa-xs fa-solid ${roleIcon}" title="${roleTitle}"></span>\n`;
+                    }
+                    if (isInjectionPrompt) {
+                        nameSpanHtml += `<small class="prompt-manager-injection-depth">@ ${escapeFn(String(prompt.injection_depth))}</small>\n`;
+                    }
+                    if (isOverriddenPrompt) {
+                        nameSpanHtml += '<small class="fa-solid fa-address-card prompt-manager-overridden" title="Pulled from a character card"></small>\n';
+                    }
 
-                    console.timeEnd('WASM_PM_Render');
-                } catch (e) {
-                    console.warn('WASM PM render failed, falling back to original', e);
-                    return originalRenderListItems();
-                }
-            };
+                    htmlStr += `
+                        <li class="${prefix}prompt_manager_prompt ${draggableClass} ${enabledClass} ${markerClass} ${importantClass}" data-pm-identifier="${escapeFn(prompt.identifier)}">
+                            <span class="drag-handle">☰</span>
+                            <span class="${prefix}prompt_manager_prompt_name" data-pm-name="${encodedName}">
+                                ${nameSpanHtml}
+                            </span>
+                            <span>
+                                <span class="prompt_manager_prompt_controls">
+                                    ${detachSpanHtml}
+                                    ${editSpanHtml}
+                                    ${toggleSpanHtml}
+                                </span>
+                            </span>
+                            <span class="prompt_manager_prompt_tokens" data-pm-tokens="${calculatedTokens}"><span class="${warningClass}" title="${warningTitle}"> </span>${calculatedTokens}</span>
+                        </li>
+                    `;
+                });
 
-            const origRender = pm.render.bind(pm);
-            pm.render = async function(afterTryGenerate = true) {
-                if (this._skipNextTryGenerate) {
-                    this._skipNextTryGenerate = false;
-                    // Passing a truthy non-boolean value like 'skip' bypasses the `!afterTryGenerate` check
-                    // AND fails the strict `true === afterTryGenerate` check, falling through to the `else` branch
-                    // which renders the UI directly without calling tryGenerate!
-                    return origRender('skip'); 
-                }
-                return origRender(afterTryGenerate);
-            };
+                this.listElement.innerHTML = '';
+                this.listElement.insertAdjacentHTML('beforeend', htmlStr);
 
-            console.log('preset-cards: PromptManager patched with WASM accelerator and tryGenerate skip');
+                // Re-bind event listeners (same as original)
+                Array.from(this.listElement.getElementsByClassName('prompt-manager-detach-action')).forEach(el => {
+                    el.addEventListener('click', this.handleDetach);
+                });
+                Array.from(this.listElement.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
+                    el.addEventListener('click', this.handleInspect);
+                });
+                Array.from(this.listElement.getElementsByClassName('prompt-manager-edit-action')).forEach(el => {
+                    el.addEventListener('click', this.handleEdit);
+                });
+                Array.from(this.listElement.querySelectorAll('.prompt-manager-toggle-action')).forEach(el => {
+                    el.addEventListener('click', this.handleToggle);
+                });
+
+                console.timeEnd('JS_PM_Render');
+            } catch (e) {
+                console.warn('JS PM render failed, falling back to original', e);
+                return originalRenderListItems();
+            }
         };
 
-        // PromptManager is initialized lazily, so we hook into its setup event
-        eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, () => {
-            if (promptManager && !promptManager._wasmPatched) {
-                patchPM();
-                promptManager._wasmPatched = true;
-            }
-        });
+        const origRender = pm.render.bind(pm);
+        pm.render = async function(afterTryGenerate = true) {
+            if (this._skipNextTryGenerate) {
+                this._skipNextTryGenerate = false;
+                
+                // If text is generating, fallback to original behavior to be safe.
+                const isGenerating = (typeof window.is_send_press !== 'undefined' && window.is_send_press) || 
+                                     (typeof window.is_group_generating !== 'undefined' && window.is_group_generating);
+                if (isGenerating) {
+                    return origRender('skip');
+                }
 
-        // Also try immediately in case PM is already ready
-        if (promptManager && !promptManager._wasmPatched) {
+                // Bypass `origRender` which uses `waitUntilCondition` containing a hardcoded 100ms interval.
+                try {
+                    const scrollPosition = this.containerElement ? this.containerElement.scrollTop : 0;
+                    
+                    if (typeof this.profileStart === 'function') this.profileStart('render');
+                    await this.renderPromptManager();
+                    await this.renderPromptManagerListItems();
+                    if (typeof this.makeDraggable === 'function') this.makeDraggable();
+                    if (typeof this.profileEnd === 'function') this.profileEnd('render');
+
+                    if (this.containerElement) this.containerElement.scrollTop = scrollPosition;
+                    return;
+                } catch (e) {
+                    console.warn('Pure JS PM render bypass failed, falling back to origRender', e);
+                    return origRender('skip');
+                }
+            }
+            return origRender(afterTryGenerate);
+        };
+
+        // Monkey-patch renderPromptManager to skip Handlebars and DOM destruction
+        pm.renderPromptManager = async function () {
+            let selectedPromptIndex = 0;
+            const existingAppendSelect = document.getElementById(`${this.configuration.prefix}prompt_manager_footer_append_prompt`);
+            if (existingAppendSelect instanceof HTMLSelectElement) {
+                selectedPromptIndex = existingAppendSelect.selectedIndex;
+            }
+            const promptManagerDiv = this.containerElement;
+            
+            // Fast-path: Update existing DOM instead of destroying it
+            let rangeBlockDiv = promptManagerDiv.querySelector('.range-block');
+            
+            if (rangeBlockDiv) {
+                // Update Token count
+                const tokenSpan = promptManagerDiv.querySelector(`.${this.configuration.prefix}prompt_manager_header div:last-child`);
+                if (tokenSpan) {
+                    tokenSpan.innerHTML = `<span data-i18n="Total Tokens:">Total Tokens:</span> ${this.tokenUsage} `;
+                }
+                
+                // Update Select dropdown
+                if (null !== this.activeCharacter) {
+                    const prompts = [...this.serviceSettings.prompts]
+                        .filter(prompt => prompt && !prompt?.system_prompt)
+                        .sort((promptA, promptB) => promptA.name.localeCompare(promptB.name));
+                    const escapeFn = (str) => $('<div>').text(str).html();
+                    const promptsHtml = prompts.reduce((acc, prompt) => acc + `<option value="${prompt.identifier}">${escapeFn(prompt.name)}</option>`, '');
+                    
+                    if (existingAppendSelect) {
+                        existingAppendSelect.innerHTML = promptsHtml;
+                        if (selectedPromptIndex > 0) {
+                            selectedPromptIndex = Math.min(selectedPromptIndex, prompts.length - 1);
+                        }
+                        if (selectedPromptIndex === -1 && prompts.length) {
+                            selectedPromptIndex = 0;
+                        }
+                        existingAppendSelect.selectedIndex = selectedPromptIndex;
+                    }
+                }
+                
+                // Update error div
+                let errorDiv = promptManagerDiv.querySelector(`.${this.configuration.prefix}prompt_manager_error`);
+                if (this.error) {
+                    if (!errorDiv) {
+                        const errorHtml = `<div class="${this.configuration.prefix}prompt_manager_error"><span class="fa-solid tooltip fa-triangle-exclamation text_danger"></span> ${DOMPurify.sanitize(this.error)}</div>`;
+                        rangeBlockDiv.insertAdjacentHTML('afterbegin', errorHtml);
+                    } else {
+                        errorDiv.innerHTML = `<span class="fa-solid tooltip fa-triangle-exclamation text_danger"></span> ${DOMPurify.sanitize(this.error)}`;
+                    }
+                } else if (errorDiv) {
+                    errorDiv.remove();
+                }
+                
+                return;
+            }
+
+            // Slow-path (first render): Create the DOM using raw templates
+            promptManagerDiv.innerHTML = '';
+            const errorDivHtml = this.error ? `<div class="${this.configuration.prefix}prompt_manager_error"><span class="fa-solid tooltip fa-triangle-exclamation text_danger"></span> ${DOMPurify.sanitize(this.error)}</div>` : '';
+            
+            const headerHtml = `
+                <div class="range-block">
+                    ${this.error ? errorDivHtml : ''}
+                    <div class="${this.configuration.prefix}prompt_manager_header">
+                        <div class="${this.configuration.prefix}prompt_manager_header_advanced">
+                            <span data-i18n="Prompts">Prompts</span>
+                        </div>
+                        <div><span data-i18n="Total Tokens:">Total Tokens:</span> ${this.tokenUsage} </div>
+                    </div>
+                    <ul id="${this.configuration.prefix}prompt_manager_list" class="text_pole"></ul>
+                </div>
+            `;
+            promptManagerDiv.insertAdjacentHTML('beforeend', headerHtml);
+            this.listElement = promptManagerDiv.querySelector(`#${this.configuration.prefix}prompt_manager_list`);
+
+            if (null !== this.activeCharacter) {
+                const prompts = [...this.serviceSettings.prompts]
+                    .filter(prompt => prompt && !prompt?.system_prompt)
+                    .sort((promptA, promptB) => promptA.name.localeCompare(promptB.name));
+                const escapeFn = (str) => $('<div>').text(str).html();
+                const promptsHtml = prompts.reduce((acc, prompt) => acc + `<option value="${prompt.identifier}">${escapeFn(prompt.name)}</option>`, '');
+
+                if (selectedPromptIndex > 0) {
+                    selectedPromptIndex = Math.min(selectedPromptIndex, prompts.length - 1);
+                }
+                if (selectedPromptIndex === -1 && prompts.length) {
+                    selectedPromptIndex = 0;
+                }
+
+                rangeBlockDiv = promptManagerDiv.querySelector('.range-block');
+                const headerDiv = promptManagerDiv.querySelector(`.${this.configuration.prefix}prompt_manager_header`);
+                
+                const footerHtml = `
+                    <div class="${this.configuration.prefix}prompt_manager_footer">
+                        <select id="${this.configuration.prefix}prompt_manager_footer_append_prompt" class="text_pole" name="append-prompt">
+                            ${promptsHtml}
+                        </select>
+                        <a class="menu_button fa-chain fa-solid fa-fw" title="Insert prompt" data-i18n="[title]Insert prompt"></a>
+                        <a class="caution menu_button fa-x fa-solid fa-fw" title="Delete prompt" data-i18n="[title]Delete prompt"></a>
+                        <a class="menu_button fa-file-import fa-solid fa-fw" id="prompt-manager-import" title="Import a prompt list" data-i18n="[title]Import a prompt list"></a>
+                        <a class="menu_button fa-file-export fa-solid fa-fw" id="prompt-manager-export" title="Export this prompt list" data-i18n="[title]Export this prompt list"></a>
+                        <a class="menu_button fa-undo fa-solid fa-fw" id="prompt-manager-reset-character" title="Reset current character" data-i18n="[title]Reset current character"></a>
+                        <a class="menu_button fa-plus-square fa-solid fa-fw" title="New prompt" data-i18n="[title]New prompt"></a>
+                    </div>
+                `;
+                headerDiv.insertAdjacentHTML('afterend', footerHtml);
+
+                rangeBlockDiv.querySelector('#prompt-manager-reset-character').addEventListener('click', this.handleCharacterReset);
+                
+                const footerDiv = rangeBlockDiv.querySelector(`.${this.configuration.prefix}prompt_manager_footer`);
+                footerDiv.querySelector('.menu_button:nth-child(2)').addEventListener('click', this.handleAppendPrompt);
+                footerDiv.querySelector('.caution').addEventListener('click', this.handleDeletePrompt);
+                footerDiv.querySelector('.menu_button:last-child').addEventListener('click', this.handleNewPrompt);
+                footerDiv.querySelector('select').selectedIndex = selectedPromptIndex;
+
+                footerDiv.querySelector('#prompt-manager-import').addEventListener('click', this.handleImport);
+                footerDiv.querySelector('#prompt-manager-export').addEventListener('click', this.handleFullExport);
+            }
+        };
+
+        console.log('preset-cards: PromptManager patched with JS accelerator, dry-run skip, and render bypass');
+    };
+
+    // PromptManager is initialized lazily, so we hook into its setup event
+    eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, () => {
+        if (promptManager && !promptManager._jsPatched) {
             patchPM();
-            promptManager._wasmPatched = true;
+            promptManager._jsPatched = true;
         }
+    });
+
+    // Also try immediately in case PM is already ready
+    if (promptManager && !promptManager._jsPatched) {
+        patchPM();
+        promptManager._jsPatched = true;
     }
 
 }
