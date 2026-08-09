@@ -151,6 +151,17 @@ export async function openProfileEditorPopup(
     let mobileShowRight = false;
     /** 本会话拖拽重排过的条目（打脏标记，立即保存不进 diff；序号保持不更新）。 */
     const reorderedIds = new Set<string>();
+    /** 弹窗打开时的 prompt_order 快照：拖拽脏标记的基准（改回原位则清除）。 */
+    const initialOrderIndex = new Map<string, number>();
+    {
+        const preset = openai_settings[idx] as Preset;
+        const orderList = findOrderList(preset, resolvePromptOrderTarget());
+        if (Array.isArray(orderList?.order)) {
+            orderList.order.forEach((o: any, i: number) => {
+                if (o && typeof o.identifier === 'string') initialOrderIndex.set(o.identifier, i);
+            });
+        }
+    }
     let popup: Popup;
 
     // 读取当前预设/元数据/profile 解析后的展示条目（每次调用取最新内存态，clear 等直接改内存对象）
@@ -512,12 +523,14 @@ export async function openProfileEditorPopup(
         ];
         if (newOrder.length === order.length && newOrder.every((o, i) => o.identifier === order[i].identifier)) return;
 
-        // 被移动的条目：位置变化的打脏标记（序号保持不更新）
-        const oldIndex = new Map(order.map((o, i) => [o.identifier, i]));
+        // 相对弹窗打开时的原始顺序重算脏标记：位置变化的标脏，改回原位的清除
         const newIndex = new Map(newOrder.map((o, i) => [o.identifier, i]));
         for (const o of newOrder) {
-            if (oldIndex.get(o.identifier) !== newIndex.get(o.identifier)) {
-                reorderedIds.add(o.identifier);
+            const dirtyNow = initialOrderIndex.get(o.identifier) !== newIndex.get(o.identifier);
+            const wasDirty = reorderedIds.has(o.identifier);
+            if (dirtyNow !== wasDirty) {
+                if (dirtyNow) reorderedIds.add(o.identifier);
+                else reorderedIds.delete(o.identifier);
                 refreshEntryRow(o.identifier);
             }
         }
