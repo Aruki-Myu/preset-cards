@@ -18,6 +18,8 @@ class PCManagerCore {
         this.dialog = null;
         this.activeCharacter = null;
         this.editTargetId = null;
+        this.showOverview = false;
+        this.macroMode = false;
         this.mobileShowRight = false;
     }
 
@@ -43,6 +45,8 @@ class PCManagerCore {
         };
         this.diffs = [];
         this.editTargetId = null;
+        this.showOverview = false;
+        this.macroMode = false;
         this.mobileShowRight = false;
         return true;
     }
@@ -119,6 +123,7 @@ class PCManagerCore {
                     <div class="pc-header">
                         <h2>PCManager <span style="font-size: 0.8rem; font-weight: normal; color: gray;">Transactional Mode</span></h2>
                         <div class="pc-header-controls">
+                            <button id="pc-btn-view-overview" class="pc-top-action-btn" title="全览所有提示词"><i class="fa-solid fa-eye"></i> 全览</button>
                             <button id="pc-btn-view-staged" class="pc-top-action-btn" title="View Staged Changes"><i class="fa-solid fa-list-check"></i> <span>(0)</span></button>
                             <button id="pc-btn-commit" class="pc-top-action-btn pc-btn-commit" title="Commit Changes"><i class="fa-solid fa-check"></i> 提交</button>
                             <button id="pc-btn-close" class="pc-top-action-btn" title="Close"><i class="fa-solid fa-times"></i></button>
@@ -143,6 +148,7 @@ class PCManagerCore {
                         <button id="pc-btn-mobile-back" class="pc-top-action-btn" title="Back to prompt list"><i class="fa-solid fa-arrow-left"></i> 返回列表</button>
                     </div>
                     <div class="pc-diff-area" id="pc-diff-area"></div>
+                    <div class="pc-overview-area" id="pc-overview-area" style="display:none; flex: 1; flex-direction: column;"></div>
                     <div class="pc-edit-area" id="pc-edit-area" style="display:none;"></div>
                 </div>
             </div>
@@ -164,8 +170,15 @@ class PCManagerCore {
                 this.dialog.closest('.popup').find('.popup-controls .cancel').trigger('click');
             }
         });
+        this.dialog.find('#pc-btn-view-overview').on('click', () => {
+            this.editTargetId = null;
+            this.showOverview = true;
+            this.mobileShowRight = true;
+            this.updateRightPane();
+        });
         this.dialog.find('#pc-btn-view-staged').on('click', () => {
             this.editTargetId = null;
+            this.showOverview = false;
             this.mobileShowRight = true;
             this.updateRightPane();
         });
@@ -369,6 +382,7 @@ class PCManagerCore {
         listEl.find('.pc-prompt-card').on('click', (e) => {
             if (listEl.hasClass('is-dragging')) return;
             this.editTargetId = $(e.currentTarget).data('id');
+            this.showOverview = false;
             this.mobileShowRight = true;
             this.updateRightPane();
         });
@@ -385,6 +399,7 @@ class PCManagerCore {
 
         const diffEl = this.dialog.find('#pc-diff-area');
         const editEl = this.dialog.find('#pc-edit-area');
+        const overviewEl = this.dialog.find('#pc-overview-area');
         const commitBtn = this.dialog.find('#pc-btn-commit');
         const stagedBtn = this.dialog.find('#pc-btn-view-staged span');
 
@@ -398,15 +413,121 @@ class PCManagerCore {
         }
 
         // View Router
-        if (this.editTargetId) {
+        if (this.showOverview) {
             diffEl.hide();
+            editEl.hide();
+            overviewEl.show();
+            this.renderOverview();
+        } else if (this.editTargetId) {
+            diffEl.hide();
+            overviewEl.hide();
             editEl.show();
             this.renderEditForm();
         } else {
             editEl.hide();
+            overviewEl.hide();
             diffEl.show();
             this.renderDiffList();
         }
+    }
+
+    renderOverview() {
+        const overviewEl = this.dialog.find('#pc-overview-area');
+        const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples'];
+
+        let html = `
+        <div class="pc-editor-header" style="margin-bottom: 12px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;">
+            <h3 style="margin: 0;">提示词全览</h3>
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--SmartThemeBodyColor); background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.3);">
+                <input type="checkbox" id="pc-toggle-macro" ${this.macroMode ? 'checked' : ''} style="margin: 0;"> 宏解析模式
+            </label>
+        </div>
+        <div class="pc-overview-content" style="display: flex; flex-direction: column; gap: 12px; padding-bottom: 20px; overflow-y: auto; flex: 1; padding-right: 8px;">`;
+
+        let hasEnabled = false;
+        const localVars = {}; // Holds vars for Macro Mode
+
+        for (const orderItem of this.transactionalState.promptOrder) {
+            if (!orderItem.enabled) continue;
+            hasEnabled = true;
+
+            const prompt = this.transactionalState.prompts.find(p => p.identifier === orderItem.identifier);
+            if (!prompt) continue;
+
+            const isCore = CORE_IDS.includes(prompt.identifier) || prompt.identifier === 'chatHistory';
+            const roleColorMap = {
+                system: 'var(--SmartThemeQuoteColor, #60a5fa)',
+                user: 'var(--SmartThemeBodyColor, #34d399)',
+                assistant: 'var(--SmartThemeQuoteColor, #a78bfa)'
+            };
+            const roleColor = roleColorMap[prompt.role] || 'var(--SmartThemeQuoteColor)';
+
+            html += `<div class="pc-overview-item" data-id="${prompt.identifier}" style="background: rgba(var(--SmartThemeBodyColorRgb, 200, 200, 200), 0.04); border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; overflow: hidden; text-align: left; cursor: pointer; transition: all 0.2s ease;">
+                <div style="background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.08); border-bottom: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1); padding: 6px 12px; font-size: 0.85rem; font-weight: 700; color: var(--SmartThemeBodyColor); display: flex; justify-content: space-between; text-align: left;">
+                    <span>${escapeHtml(prompt.name)}</span>
+                    <span style="opacity: 0.8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; color: ${roleColor};">${escapeHtml(prompt.role || 'system')}</span>
+                </div>
+                <div style="padding: 12px; font-size: 0.9rem; white-space: pre-wrap; font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; opacity: 0.9; color: var(--SmartThemeBodyColor); word-break: break-word;">`;
+
+            if (isCore) {
+                html += `<span style="color: var(--SmartThemeQuoteColor, #60a5fa); opacity: 0.8;">{{SillyTavern Prompt #${escapeHtml(prompt.identifier)}}}</span>`;
+            } else {
+                let text = prompt.content || prompt.prompt || '';
+                if (this.macroMode) {
+                    text = text.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, getvarName) => {
+                        if (commentGroup !== undefined) {
+                            return ''; // Remove comment
+                        } else if (setvarName !== undefined) {
+                            localVars[setvarName.trim()] = setvarVal.trim();
+                            return ''; // Remove setvar
+                        } else if (getvarName !== undefined) {
+                            const varName = getvarName.trim();
+                            return localVars[varName] !== undefined ? localVars[varName] : '';
+                        }
+                        return match;
+                    });
+
+                    // Process {{trim}} (remove macro and adjacent newlines)
+                    text = text.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
+                }
+                html += escapeHtml(text);
+            }
+
+            html += `</div></div>`;
+        }
+
+        if (!hasEnabled) {
+            html += '<div style="opacity: 0.5; padding: 30px; text-align: center;">当前没有启用的提示词条目。</div>';
+        }
+
+        html += '</div>';
+        overviewEl.html(html);
+
+        overviewEl.find('.pc-overview-item').on('mouseenter', function () {
+            $(this).css({
+                'border-color': 'var(--SmartThemeQuoteColor)',
+                'box-shadow': '0 4px 12px rgba(0,0,0,0.1)'
+            });
+        }).on('mouseleave', function () {
+            $(this).css({
+                'border-color': 'var(--SmartThemeBorderColor)',
+                'box-shadow': 'none'
+            });
+        }).on('click', (e) => {
+            const id = $(e.currentTarget).data('id');
+            this.editTargetId = id;
+            this.showOverview = false;
+            this.updateRightPane();
+
+            // Also select the corresponding item in the left list to sync UI
+            this.dialog.find('.pc-prompt-card').removeClass('active');
+            this.dialog.find(`.pc-prompt-card[data-id="${id}"]`).addClass('active');
+        });
+
+        overviewEl.find('#pc-toggle-macro').on('change', (e) => {
+            this.macroMode = e.target.checked;
+            this.renderOverview();
+        });
     }
 
     renderDiffList() {
@@ -491,9 +612,9 @@ class PCManagerCore {
             <div class="pc-form-group">
                 <label>Role</label>
                 <select class="pc-form-control" id="pc-edit-role" ${isHistory ? 'disabled' : ''}>
-                    <option value="system" ${prompt.role === 'system' ? 'selected' : ''}>System</option>
-                    <option value="user" ${prompt.role === 'user' ? 'selected' : ''}>User</option>
-                    <option value="assistant" ${prompt.role === 'assistant' ? 'selected' : ''}>Assistant</option>
+                    <option value="system" ${prompt.role === 'system' ? 'selected' : ''}>系统</option>
+                    <option value="user" ${prompt.role === 'user' ? 'selected' : ''}>用户</option>
+                    <option value="assistant" ${prompt.role === 'assistant' ? 'selected' : ''}>助手</option>
                 </select>
             </div>
             <div class="pc-form-group">
@@ -597,6 +718,7 @@ class PCManagerCore {
         });
 
         this.editTargetId = newId;
+        this.showOverview = false;
         this.mobileShowRight = true;
         this.updateListUI();
         this.updateRightPane();
