@@ -171,7 +171,7 @@ export function buildPresetList(): PresetCardModel[] {
 
         // Decorate each profile row with a type indicator so cards.html can render
         // [Base] / [Delta] badges, the derive button, and expandable entry list.
-        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; parentName: string; entries: ProfileEntryView[] };
+        type ProfileRow = PresetProfile & { isBase: boolean; isDelta: boolean; isV1: boolean; parentName: string; entries: ProfileEntryView[]; isActiveProfile: boolean };
         const profiles: PresetProfile[] = (Array.isArray(meta.profiles) ? meta.profiles : []).map((p) => {
             let entries: ProfileEntryView[] = [];
             let parentName = '';
@@ -191,6 +191,7 @@ export function buildPresetList(): PresetCardModel[] {
                 isV1: !isPromptBaseProfile(p) && !isPromptDeltaProfile(p),
                 parentName,
                 entries,
+                isActiveProfile: meta.activeProfileId === String(p.id),
             };
             return row;
         });

@@ -39,7 +39,7 @@ import { applyBufferedEdits, clearBufferedForName, type PromptEditBuffer } from 
 import { applyDirtyHighlights } from './presetDirty.js';
 import { applyDefaultOriginalFields, lockDefaultSnapshot } from './presetSnapshot.js';
 import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
-import { applyBufferedAndSnapshot, commitBufferedEditsToProfile, openProfileEditorPopup } from './profileEditor.js';
+import { openProfileEditorPopup } from './profileEditor.js';
 
 export async function openPresetCards(): Promise<void> {
     let presets = buildPresetList();
@@ -556,6 +556,9 @@ export async function openPresetCards(): Promise<void> {
 
         applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], { showMissingToast: true });
 
+        // 记录最近加载的 profile 为激活（卡片页选中框特效，持久化）
+        meta.activeProfileId = String(profileId);
+
         if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
             // 主/派生 profile：保存到磁盘并同步运行态，然后打开 profile 编辑器弹窗
             await saveMeta(name, idx, meta);
@@ -583,56 +586,6 @@ export async function openPresetCards(): Promise<void> {
 
             clearBufferedForName(name, sessionEdits, pendingToggles);
         }
-    });
-
-    // ---- Profiles: Update Configuration ----
-    dialog.on('click', '.preset_card_profile_update', async function (e) {
-        e.stopPropagation();
-        const row = $(this).closest('.preset_card_profile_row');
-        const profileId = row.data('profile-id');
-        const card = $(this).closest('.preset_card');
-        const name = card.attr('data-preset-name') as string;
-        const idx = card.data('preset-index') as number;
-
-        const confirm = await callGenericPopup(L('Overwrite this configuration with current settings?'), POPUP_TYPE.CONFIRM);
-        if (!confirm) return;
-
-        let loadingToast: JQuery | null = null;
-        if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
-            $('#update_oai_preset').trigger('click');
-            await new Promise<void>(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
-        }
-
-        const preset = openai_settings[idx] as Preset;
-        const meta = readMeta(preset);
-        const profile = getProfile(meta, profileId);
-        if (!profile) return;
-
-        // 覆盖同样先统一应用缓冲，快照才能反映本次编辑
-        const snapshot = applyBufferedAndSnapshot(preset, name, sessionEdits, pendingToggles);
-
-        if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
-            // base：enabled 全量合并 + 本次会话编辑条目的 fields（见 mergeBaseSnapshot）；
-            // delta：基于解析后的 parent 状态重新生成差异（snapshotToChanges 保留既有 fields）；
-            // 父链缺失（仅 delta）时 abort：toast 提示并中止，不落盘。
-            const committed = await commitBufferedEditsToProfile(profile, snapshot, meta, name, idx, sessionEdits, 'abort');
-            if (!committed) return;
-            refreshActivePresetUI(name);
-        } else {
-            // v1 全量快照
-            const v1Snapshot = structuredClone(preset);
-            delete v1Snapshot.extensions; // Don't nest extensions
-            profile.settings = v1Snapshot;
-
-            await saveMeta(name, idx, meta);
-            toastr.success(L('Configuration updated'));
-        }
-
-        // 覆盖已消费本批编辑：清空当前 name 的缓冲（其他卡的缓冲保留）并重渲染网格
-        clearBufferedForName(name, sessionEdits, pendingToggles);
-        await refreshGrid();
     });
 
     // ---- Profiles: Derive from Base ----
@@ -778,6 +731,9 @@ export async function openPresetCards(): Promise<void> {
 
         const deleteIds = new Set([String(profileId), ...descendantIds]);
         meta.profiles = (meta.profiles || []).filter(p => !deleteIds.has(String(p.id)));
+        if (meta.activeProfileId !== undefined && deleteIds.has(meta.activeProfileId)) {
+            meta.activeProfileId = undefined;
+        }
         await saveMeta(name, idx, meta);
 
         // 整棵子树可能跨多行，重建网格而非仅删当前行

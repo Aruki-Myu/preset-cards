@@ -729,6 +729,14 @@
     border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
 }
 
+/* 当前激活的 profile：选中框特效 */
+.preset_card_profile_row.active {
+    border: 1px solid var(--SmartThemeQuoteColor);
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.12);
+    box-shadow: 0 0 0 1px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25),
+        0 2px 8px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25);
+}
+
 .preset_card_profile_name_wrap {
     display: flex;
     align-items: center;

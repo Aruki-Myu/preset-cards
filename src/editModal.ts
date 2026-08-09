@@ -60,7 +60,7 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
         return $(this).data('model-id') as string;
     }).get();
 
-    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot, defaultSnapshotLocked: meta.defaultSnapshotLocked });
+    await saveMeta(presetName, presetIndex, { description: newDesc, models: newModels, bgImage: newBgImage, profiles: meta.profiles, defaultSnapshot: meta.defaultSnapshot, defaultSnapshotLocked: meta.defaultSnapshotLocked, activeProfileId: meta.activeProfileId });
     toastr.success(t`Preset updated`);
     if (onSaved) onSaved();
 }

@@ -77,6 +77,8 @@ export interface PresetMeta {
     defaultSnapshot?: PromptDefaultSnapshotEntry[];
     /** 默认基准是否已全量锁定（区分旧版仅开关快照与新版含 originalFields 的全量基线）。 */
     defaultSnapshotLocked?: boolean;
+    /** 最近一次加载的 profile id（卡片页选中框特效）。 */
+    activeProfileId?: string;
 }
 
 /** 按 id 查 profile（id 归一化为字符串，兼容数字/字符串来源）。 */
@@ -101,6 +103,7 @@ export function readMeta(preset: Preset | undefined): PresetMeta {
         bgImage: ext?.bgImage || '',
         defaultSnapshot: Array.isArray(ext?.defaultSnapshot) ? ext.defaultSnapshot : undefined,
         defaultSnapshotLocked: ext?.defaultSnapshotLocked === true,
+        activeProfileId: ext?.activeProfileId,
     };
 }
 
@@ -120,6 +123,7 @@ export async function saveMeta(presetName: string, presetIndex: number, meta: Pr
         bgImage: meta.bgImage || '',
         defaultSnapshot: meta.defaultSnapshot,
         defaultSnapshotLocked: meta.defaultSnapshotLocked === true,
+        activeProfileId: meta.activeProfileId,
     };
 
     // Also update oai_settings if this is the current preset
