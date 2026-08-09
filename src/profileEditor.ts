@@ -4,7 +4,7 @@
 
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
 import { oai_settings, openai_settings } from '@sillytavern/scripts/openai';
-import { POPUP_TYPE, Popup } from '@sillytavern/scripts/popup';
+import { POPUP_RESULT, POPUP_TYPE, Popup } from '@sillytavern/scripts/popup';
 import { EXTENSION_NAME } from './constants.js';
 import { L } from './i18n.js';
 import {
@@ -146,7 +146,6 @@ export async function openProfileEditorPopup(
     const prefix = bufferPrefix(name);
 
     let dialog: JQuery<HTMLElement> = $('<div id="preset_profile_editor" class="pc-manager-container"></div>');
-    let selectedIdentifier: string | null = null;
     let searchQuery = '';
     let popup: Popup;
 
@@ -249,7 +248,7 @@ export async function openProfileEditorPopup(
 
         applyBufferOverlay();
         applySearch();
-        renderRightPane();
+        renderStagedPane();
         setupSortable();
         refreshCounts();
     }
@@ -269,6 +268,7 @@ export async function openProfileEditorPopup(
                 toggle.html(toggleTarget
                     ? '<i class="fa-solid fa-toggle-on"></i> On'
                     : '<i class="fa-solid fa-toggle-off"></i> Off');
+                entry.toggleClass('disabled', !toggleTarget);
             }
             if (session?.edited.name !== undefined) {
                 entry.find('.pc-card-name').text(session.edited.name).attr('title', identifier);
@@ -292,27 +292,6 @@ export async function openProfileEditorPopup(
             if (match) visible++;
         });
         dialog.find('#pc-prompt-empty-search').toggle(visible === 0 && q.length > 0);
-    }
-
-    // 右栏渲染：有选中条目 → #pc-edit-area 内联编辑表单；否则 #pc-diff-area staged diff
-    function renderRightPane(): void {
-        const diffArea = dialog.find('#pc-diff-area');
-        const editArea = dialog.find('#pc-edit-area');
-        if (selectedIdentifier) {
-            const ctx = currentCtx();
-            const view = ctx?.entries.find((e) => e.identifier === selectedIdentifier);
-            if (ctx && view?.editable) {
-                editArea.empty().append(buildInlineEdit(ctx.preset, selectedIdentifier));
-                editArea.show();
-                diffArea.hide();
-                return;
-            }
-            // 条目不可编辑（system_prompt / marker / 缺失）→ 回退 staged 视图
-            selectedIdentifier = null;
-        }
-        editArea.hide();
-        diffArea.show();
-        renderStagedPane();
     }
 
     function renderStagedPane(): void {
@@ -348,14 +327,12 @@ export async function openProfileEditorPopup(
         return undo;
     }
 
-    // 内联编辑表单：复用 editModal 的表单构造，保存写会话缓冲
-    function buildInlineEdit(preset: Preset, identifier: string): JQuery<HTMLElement> {
+    // 独立编辑弹窗：复用 editModal 的表单构造，保存写会话缓冲
+    async function openEditPopup(preset: Preset, identifier: string): Promise<void> {
         const prompt = findPromptInPreset(preset, identifier);
-        const wrap = $('<div class="pc-edit-form"></div>');
-        if (!prompt) {
-            wrap.append($('<div class="pc-diff-empty"></div>').text(L('No entries')));
-            return wrap;
-        }
+        if (!prompt) return;
+
+        const editDialog = $('<div class="pc-edit-form"></div>');
 
         const header = $('<div class="pc-editor-header"></div>');
         header.append($('<h3></h3>').text('#' + identifier));
@@ -372,6 +349,13 @@ export async function openProfileEditorPopup(
             .append($('<i class="fa-solid fa-times"></i>'))
             .append(' ' + L('Cancel'));
 
+        const popupEdit = new Popup(editDialog, POPUP_TYPE.TEXT, '', {
+            okButton: false,
+            cancelButton: false,
+            wide: true,
+            large: true,
+        });
+
         saveBtn.on('click', () => {
             const editedFields = form.collectFields();
             if (editedFields) {
@@ -385,20 +369,19 @@ export async function openProfileEditorPopup(
                     sessionEdits.set(key, { initial, edited });
                 }
             }
-            selectedIdentifier = null;
+            popupEdit.complete(POPUP_RESULT.OK);
             refreshEntryRow(identifier);
             refreshCounts();
             renderStagedPane();
         });
-        cancelBtn.on('click', () => {
-            selectedIdentifier = null;
-            renderStagedPane();
-        });
+        cancelBtn.on('click', () => popupEdit.completeCancelled());
+
         actions.append(saveBtn).append(cancelBtn);
         header.append(actions);
-        wrap.append(header);
-        wrap.append(form.container);
-        return wrap;
+        editDialog.append(header);
+        editDialog.append(form.container);
+
+        await popupEdit.show();
     }
 
     // 局部刷新单条 entry（名字/开关/dirty/clear 可见性）
@@ -521,8 +504,7 @@ export async function openProfileEditorPopup(
         const ctx = currentCtx();
         const view = ctx?.entries.find((x) => x.identifier === identifier);
         if (!view?.editable) return; // system_prompt / marker 不渲染编辑
-        selectedIdentifier = identifier;
-        renderRightPane();
+        void openEditPopup(ctx!.preset, identifier);
     });
 
     dialog.on('click', '.pc-btn-toggle', function (e) {
@@ -549,8 +531,7 @@ export async function openProfileEditorPopup(
 
         refreshEntryRow(identifier);
         refreshCounts();
-        // 未打开内联编辑时刷新 staged 视图（打开中则保留表单，避免丢失未保存文本）
-        if (!selectedIdentifier) renderStagedPane();
+        renderStagedPane();
     });
 
     dialog.on('click', '.pc-card-clear', function (e) {
@@ -595,14 +576,12 @@ export async function openProfileEditorPopup(
             }
         }
 
-        if (selectedIdentifier === identifier) selectedIdentifier = null;
-        if (!selectedIdentifier) renderStagedPane();
+        renderStagedPane();
         refreshEntryRow(identifier);
         refreshCounts();
     });
 
     dialog.on('click', '#pc-btn-view-staged', function () {
-        selectedIdentifier = null;
         renderStagedPane();
     });
 
@@ -646,7 +625,6 @@ export async function openProfileEditorPopup(
 
         // 本批编辑已消费，清空当前 name 的记录（其他卡的缓冲保留）
         clearBufferedForName(name, sessionEdits, pendingToggles);
-        selectedIdentifier = null;
 
         // 重渲染弹窗（diff 清空）+ 刷新卡片网格
         await renderDialog();
