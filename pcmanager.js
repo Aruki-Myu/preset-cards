@@ -288,7 +288,11 @@ class PCManagerCore {
                     ui.helper.css('box-shadow', '0 16px 32px rgba(0,0,0,0.4), 0 0 0 2px var(--SmartThemeQuoteColor)');
                     ui.helper.css('cursor', 'grabbing');
                 },
-                stop: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
+                stop: (event, ui) => {
+                    setTimeout(() => listEl.removeClass('is-dragging'), 50);
+                    ui.item.css('box-shadow', '');
+                    ui.item.css('cursor', '');
+                },
                 update: (event, ui) => {
                     const newOrderIds = listEl.sortable('toArray', { attribute: 'data-id' });
                     this.transactionalState.promptOrder = newOrderIds.map(id => {
