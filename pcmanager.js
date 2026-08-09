@@ -18,13 +18,14 @@ class PCManagerCore {
         this.dialog = null;
         this.activeCharacter = null;
         this.editTargetId = null;
+        this.mobileShowRight = false;
     }
 
     cloneState() {
         if (!promptManager || !promptManager.serviceSettings) return false;
 
         if (this.diffs && this.diffs.length > 0) {
-            toastr.info('您还有未提交的更改 (You have uncommitted changes)');
+            toastr.info('您还有未提交的更改');
             return true;
         }
 
@@ -42,6 +43,7 @@ class PCManagerCore {
         };
         this.diffs = [];
         this.editTargetId = null;
+        this.mobileShowRight = false;
         return true;
     }
 
@@ -118,16 +120,28 @@ class PCManagerCore {
                         <h2>PCManager <span style="font-size: 0.8rem; font-weight: normal; color: gray;">Transactional Mode</span></h2>
                         <div class="pc-header-controls">
                             <button id="pc-btn-view-staged" class="pc-top-action-btn" title="View Staged Changes"><i class="fa-solid fa-list-check"></i> <span>(0)</span></button>
-                            <button id="pc-btn-commit" class="pc-top-action-btn pc-btn-commit" title="Commit Changes"><i class="fa-solid fa-check"></i> Commit</button>
+                            <button id="pc-btn-commit" class="pc-top-action-btn pc-btn-commit" title="Commit Changes"><i class="fa-solid fa-check"></i> 提交</button>
                             <button id="pc-btn-close" class="pc-top-action-btn" title="Close"><i class="fa-solid fa-times"></i></button>
                         </div>
                     </div>
-                    <div class="pc-search-bar" style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));">
-                        <input type="text" id="pc-search-input" class="pc-form-control" placeholder="Search prompts by name or content..." style="width: 100%; box-sizing: border-box;" />
+                    <div class="pc-toolbar" style="display: flex; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1)); align-items: center;">
+                        <div style="flex: 1; position: relative;">
+                            <input type="text" id="pc-search-input" class="pc-form-control" placeholder="搜索条目名称或内部提示词..." style="width: 100%; box-sizing: border-box; padding-left: 28px;" />
+                            <i class="fa-solid fa-search" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.4; font-size: 0.85rem; pointer-events: none;"></i>
+                        </div>
+                        <button id="pc-btn-create-prompt" class="pc-top-action-btn" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 6px;" title="新建一个全新的提示词条目">
+                            <i class="fa-solid fa-plus"></i> 新建条目
+                        </button>
+                        <button id="pc-btn-import-prompt" class="pc-top-action-btn" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 6px;" title="从提示词库中引入未在当前列表的条目">
+                            <i class="fa-solid fa-folder-plus"></i> 引入条目
+                        </button>
                     </div>
                     <div class="pc-prompt-list" id="pc-prompt-list"></div>
                 </div>
                 <div class="pc-right-pane">
+                    <div class="pc-mobile-nav">
+                        <button id="pc-btn-mobile-back" class="pc-top-action-btn" title="Back to prompt list"><i class="fa-solid fa-arrow-left"></i> 返回列表</button>
+                    </div>
                     <div class="pc-diff-area" id="pc-diff-area"></div>
                     <div class="pc-edit-area" id="pc-edit-area" style="display:none;"></div>
                 </div>
@@ -152,11 +166,20 @@ class PCManagerCore {
         });
         this.dialog.find('#pc-btn-view-staged').on('click', () => {
             this.editTargetId = null;
+            this.mobileShowRight = true;
             this.updateRightPane();
         });
+        this.dialog.find('#pc-btn-mobile-back').on('click', () => {
+            this.editTargetId = null;
+            this.mobileShowRight = false;
+            this.updateRightPane();
+        });
+        this.dialog.find('#pc-btn-create-prompt').on('click', () => this.createPrompt());
+        this.dialog.find('#pc-btn-import-prompt').on('click', () => this.openImportModal());
 
         await callGenericPopup(this.dialog, POPUP_TYPE.TEXT, '', {
             transparent: true,
+            large: true,
             okButton: false,
             allowVerticalScrolling: true,
             onClose: () => { this.isOpen = false; }
@@ -226,16 +249,17 @@ class PCManagerCore {
                 <div class="pc-card-header">
                     <span class="pc-card-title">
                         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 100%;">
-                            <span class="pc-card-name" style="flex-shrink: 0;">${escapeHtml(prompt.name)}</span>
+                            <span class="pc-card-name">${escapeHtml(prompt.name)}</span>
                             ${setVarHtml}
                         </div>
-                        <small class="pc-card-id">#${escapeHtml(prompt.identifier)}</small>
+                        <small class="pc-card-id" title="#${escapeHtml(prompt.identifier)}">#${escapeHtml(prompt.identifier)}</small>
                     </span>
-                    <span class="pc-role-badge role-${prompt.role || 'system'}">${escapeHtml(prompt.role || 'system')}</span>
                 </div>
                 <div class="pc-card-macros">${macroHtml}</div>
-                <div class="pc-card-controls">
-                    <button class="pc-btn-toggle" data-id="${prompt.identifier}" title="Toggle Prompt">${orderItem.enabled ? '<i class="fa-solid fa-toggle-on"></i> On' : '<i class="fa-solid fa-toggle-off"></i> Off'}</button>
+                <div class="pc-card-controls" style="display: flex; align-items: center; gap: 8px;">
+                    <span class="pc-role-badge role-${prompt.role || 'system'}">${escapeHtml(prompt.role || 'system')}</span>
+                    <button class="pc-btn-toggle" data-id="${prompt.identifier}" title="Toggle Prompt">${orderItem.enabled ? '<i class="fa-solid fa-toggle-on"></i> ' : '<i class="fa-solid fa-toggle-off"></i> '}</button>
+                    <button class="pc-btn-remove" data-id="${prompt.identifier}" title="从当前列表中移除" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-trash-can"></i></button>
                 </div>
             `;
             listEl.append(card);
@@ -275,6 +299,24 @@ class PCManagerCore {
             }
         });
 
+        listEl.find('.pc-btn-remove').on('click', (e) => {
+            e.stopPropagation();
+            const id = $(e.currentTarget).data('id');
+            const idx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
+            if (idx > -1) {
+                const prompt = this.transactionalState.prompts.find(p => p.identifier === id);
+                this.transactionalState.promptOrder.splice(idx, 1);
+                if (this.editTargetId === id) {
+                    this.editTargetId = null;
+                }
+                this.updateListUI();
+                this.updateRightPane();
+                toastr.info(`已从列表中移除 "${prompt?.name || id}"`);
+            }
+        });
+
+        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
         listEl.find('.pc-var-badge').on('click', (e) => {
             e.stopPropagation();
             const badge = $(e.currentTarget);
@@ -285,12 +327,12 @@ class PCManagerCore {
             const varValue = badge.data('varvalue');
 
             this.editTargetId = id;
+            this.mobileShowRight = true;
             this.updateRightPane();
 
             const textarea = this.dialog.find('#pc-edit-content')[0];
             if (textarea) {
                 const text = textarea.value;
-                const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
                 let regex;
                 if (type === 'setvar') {
                     regex = new RegExp(`(\\{\\{setvar::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
@@ -311,12 +353,20 @@ class PCManagerCore {
         listEl.find('.pc-prompt-card').on('click', (e) => {
             if (listEl.hasClass('is-dragging')) return;
             this.editTargetId = $(e.currentTarget).data('id');
+            this.mobileShowRight = true;
             this.updateRightPane();
         });
     }
 
     updateRightPane() {
         this.computeDiffs();
+        const layoutEl = this.dialog.find('.pc-layout');
+        if (this.mobileShowRight) {
+            layoutEl.addClass('pc-show-right');
+        } else {
+            layoutEl.removeClass('pc-show-right');
+        }
+
         const diffEl = this.dialog.find('#pc-diff-area');
         const editEl = this.dialog.find('#pc-edit-area');
         const commitBtn = this.dialog.find('#pc-btn-commit');
@@ -346,7 +396,7 @@ class PCManagerCore {
     renderDiffList() {
         const diffEl = this.dialog.find('#pc-diff-area');
         if (this.diffs.length === 0) {
-            diffEl.html('<div style="opacity: 0.5; padding: 20px; text-align: center;">No staged changes.</div>');
+            diffEl.html('<div style="opacity: 0.5; padding: 20px; text-align: center;">空空如也.</div>');
             return;
         }
 
@@ -415,11 +465,11 @@ class PCManagerCore {
 
         editEl.html(`
             <div class="pc-editor-header">
-                <h3>Editing: ${escapeHtml(prompt.name)}</h3>
+                <h3>编辑: ${escapeHtml(prompt.name)}</h3>
             </div>
             ${(isCore || isHistory) ? '<div style="color: #ef4444; font-size: 0.8rem; margin-bottom: 12px; padding: 8px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;"><i class="fa-solid fa-triangle-exclamation"></i> 此条目为系统关键设定，部分内容已被锁定以防破坏内部注入逻辑。</div>' : ''}
             <div class="pc-form-group">
-                <label>Name</label>
+                <label>名称</label>
                 <input type="text" class="pc-form-control" id="pc-edit-name" value="${escapeHtml(prompt.name)}">
             </div>
             <div class="pc-form-group">
@@ -431,7 +481,7 @@ class PCManagerCore {
                 </select>
             </div>
             <div class="pc-form-group">
-                <label>Injection Position</label>
+                <label>位置</label>
                 <select class="pc-form-control" id="pc-edit-inj-pos" ${isHistory ? 'disabled' : ''}>
                     <option value="0" ${prompt.injection_position === 0 ? 'selected' : ''}>Before Main Prompt</option>
                     <option value="1" ${prompt.injection_position === 1 ? 'selected' : ''}>After Main Prompt</option>
@@ -443,7 +493,7 @@ class PCManagerCore {
                 <input type="number" class="pc-form-control" id="pc-edit-inj-depth" value="${prompt.injection_depth ?? 4}" min="0" ${isHistory ? 'disabled' : ''}>
             </div>
             <div class="pc-form-group">
-                <label>Prompt Text (Supports Macros)</label>
+                <label>提示词</label>
                 <textarea class="pc-form-control" id="pc-edit-content" rows="10" ${(isCore || isHistory) ? 'disabled' : ''}>${escapeHtml(prompt.content || prompt.prompt || '')}</textarea>
             </div>
             <div class="pc-editor-footer" style="display: flex; gap: 8px; justify-content: flex-start; margin-top: 16px;">
@@ -462,6 +512,7 @@ class PCManagerCore {
 
         editEl.find('.pc-btn-close-edit').on('click', () => {
             this.editTargetId = null;
+            this.mobileShowRight = false;
             this.updateRightPane();
         });
 
@@ -485,6 +536,7 @@ class PCManagerCore {
             }
 
             this.editTargetId = null;
+            this.mobileShowRight = false;
             this.updateListUI();
             this.updateRightPane();
         });
@@ -507,9 +559,139 @@ class PCManagerCore {
         toastr.success('PCManager: Changes committed.');
 
         this.diffs = [];
+        this.mobileShowRight = false;
         this.cloneState();
         this.updateListUI();
         this.updateRightPane();
+    }
+
+    createPrompt() {
+        const newId = 'pc_prompt_' + Date.now().toString(36) + Math.random().toString(36).substring(2, 6);
+        const newPrompt = {
+            identifier: newId,
+            name: '未命名条目',
+            role: 'system',
+            content: '',
+            injection_position: 0
+        };
+
+        this.transactionalState.prompts.push(newPrompt);
+        this.transactionalState.promptOrder.unshift({
+            identifier: newId,
+            enabled: true
+        });
+
+        this.editTargetId = newId;
+        this.mobileShowRight = true;
+        this.updateListUI();
+        this.updateRightPane();
+
+        setTimeout(() => {
+            const nameInput = this.dialog.find('#pc-edit-name');
+            if (nameInput.length) {
+                nameInput.focus().select();
+            }
+        }, 50);
+    }
+
+    async openImportModal() {
+        const currentOrderIds = new Set(this.transactionalState.promptOrder.map(o => o.identifier));
+        const availablePrompts = this.transactionalState.prompts.filter(p => !currentOrderIds.has(p.identifier));
+
+        if (availablePrompts.length === 0) {
+            toastr.info('提示词库中的所有条目均已在当前列表中');
+            return;
+        }
+
+        const modalContent = document.createElement('div');
+        modalContent.className = 'pc-import-modal';
+        modalContent.style.padding = '8px';
+        modalContent.style.maxHeight = '75vh';
+        modalContent.style.overflowY = 'auto';
+
+        let html = `
+            <h3 style="margin-top:0; margin-bottom: 12px; font-size: 1.1rem; display: flex; align-items: center; gap: 8px;">
+                <i class="fa-solid fa-folder-plus" style="color: #60a5fa;"></i> 从提示词库放入列表
+            </h3>
+            <p style="font-size: 0.85rem; opacity: 0.7; margin-bottom: 16px;">选择下方尚未包含在当前角色配置中的条目，放入顶部或彻底删除：</p>
+            <div class="pc-import-list" style="display: flex; flex-direction: column; gap: 8px;">
+        `;
+
+        for (const prompt of availablePrompts) {
+            html += `
+                <div class="pc-import-item" data-id="${prompt.identifier}">
+                    <div class="pc-import-info">
+                        <span class="pc-import-name">${escapeHtml(prompt.name)}</span>
+                        <small class="pc-import-id" title="#${escapeHtml(prompt.identifier)} (${escapeHtml(prompt.role || 'system')})">#${escapeHtml(prompt.identifier)} (${escapeHtml(prompt.role || 'system')})</small>
+                    </div>
+                    <div class="pc-import-actions">
+                        <button class="pc-btn-add-to-order" data-id="${prompt.identifier}" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 600;">
+                            <i class="fa-solid fa-arrow-up-from-bracket"></i> 放入
+                        </button>
+                        <button class="pc-btn-delete-permanently" data-id="${prompt.identifier}" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 600;" title="彻底从提示词库中删除此条目">
+                            <i class="fa-solid fa-trash"></i> 移除
+                        </button>
+                    </div>
+                </div>
+            `;
+        }
+        html += `</div>`;
+        modalContent.innerHTML = html;
+
+        const $modal = $(modalContent);
+
+        const removeItemAndCheckEmpty = (btnElement) => {
+            $(btnElement).closest('.pc-import-item').fadeOut(200, function () {
+                $(this).remove();
+                if ($modal.find('.pc-import-item').length === 0) {
+                    const popupInstance = Popup.util?.popups?.find(p => p.dlg && p.dlg.contains($modal[0]));
+                    if (popupInstance) popupInstance.complete(POPUP_RESULT.AFFIRMATIVE);
+                }
+            });
+        };
+
+        $modal.find('.pc-btn-add-to-order').on('click', (e) => {
+            const id = $(e.currentTarget).data('id');
+            const promptToAdd = availablePrompts.find(p => p.identifier === id);
+            if (promptToAdd) {
+                this.transactionalState.promptOrder.unshift({ identifier: id, enabled: true });
+                this.updateListUI();
+                this.updateRightPane();
+                toastr.success(`已将 "${promptToAdd.name}" 放入最顶层`);
+                removeItemAndCheckEmpty(e.currentTarget);
+            }
+        });
+
+        $modal.find('.pc-btn-delete-permanently').on('click', (e) => {
+            const id = $(e.currentTarget).data('id');
+            const pIdx = this.transactionalState.prompts.findIndex(p => p.identifier === id);
+            if (pIdx > -1) {
+                const promptName = this.transactionalState.prompts[pIdx].name;
+                this.transactionalState.prompts.splice(pIdx, 1);
+
+                const oIdx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
+                if (oIdx > -1) {
+                    this.transactionalState.promptOrder.splice(oIdx, 1);
+                }
+
+                if (this.editTargetId === id) {
+                    this.editTargetId = null;
+                }
+
+                this.updateListUI();
+                this.updateRightPane();
+                toastr.success(`已彻底删除条目 "${promptName}"`);
+                removeItemAndCheckEmpty(e.currentTarget);
+            }
+        });
+
+        await callGenericPopup($modal, POPUP_TYPE.TEXT, '', {
+            transparent: false,
+            large: true,
+            okButton: '完成',
+            cancelButton: false,
+            allowVerticalScrolling: true
+        });
     }
 }
 

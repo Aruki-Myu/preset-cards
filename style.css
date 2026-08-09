@@ -802,12 +802,12 @@
     display: flex;
     flex-direction: column;
     position: fixed;
-    inset: 4vh 6vw;
+    inset: 10px;
     z-index: 99999;
     background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.85));
     backdrop-filter: blur(20px);
     border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
-    border-radius: 16px;
+    border-radius: 12px;
     padding: 20px;
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     color: var(--SmartThemeBodyColor);
@@ -884,6 +884,7 @@
     gap: 12px;
     transition: all 0.2s ease;
     cursor: pointer;
+    min-width: 0;
 }
 
 .pc-prompt-card:hover {
@@ -902,6 +903,7 @@
     align-items: center;
     gap: 12px;
     flex: 1;
+    min-width: 0;
 }
 
 .pc-card-title {
@@ -916,10 +918,8 @@
 .pc-card-name {
     font-weight: 600;
     font-size: 0.95rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
+    word-break: break-word;
+    white-space: normal;
 }
 
 .pc-card-id {
@@ -929,10 +929,8 @@
     background: transparent;
     padding: 0;
     border-radius: 0;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    max-width: 100%;
+    word-break: break-all;
+    white-space: normal;
 }
 
 .pc-role-badge {
@@ -941,6 +939,7 @@
     padding: 3px 8px;
     border-radius: 12px;
     font-weight: 700;
+    flex-shrink: 0;
 }
 
 .pc-role-badge.role-system { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
@@ -952,6 +951,7 @@
     flex-wrap: wrap;
     gap: 6px;
     flex: 2;
+    min-width: 0;
 }
 
 .pc-macro-badge {
@@ -973,6 +973,8 @@
     display: flex;
     gap: 8px;
     align-items: center;
+    flex-shrink: 0;
+    margin-left: auto;
 }
 
 .pc-btn-toggle {
@@ -1151,4 +1153,154 @@
     outline: none;
     border-color: #3b82f6;
 }
+
+/* ===== PCManager Mobile Responsive Design ===== */
+.pc-mobile-nav {
+    display: none;
+}
+
+@media (min-width: 769px) {
+    .pc-left-pane {
+        display: flex !important;
+    }
+    .pc-right-pane {
+        display: flex !important;
+    }
+    .pc-mobile-nav {
+        display: none !important;
+    }
+}
+
+@media (max-width: 768px) {
+    .pc-manager-container {
+        inset: 6px;
+        padding: 12px;
+        border-radius: 10px;
+    }
+
+    .pc-layout {
+        gap: 0;
+    }
+
+    .pc-left-pane {
+        display: flex;
+        width: 100%;
+        padding: 12px;
+    }
+
+    .pc-right-pane {
+        display: none;
+        width: 100%;
+        padding: 12px;
+    }
+
+    .pc-layout.pc-show-right .pc-left-pane {
+        display: none !important;
+    }
+
+    .pc-layout.pc-show-right .pc-right-pane {
+        display: flex !important;
+    }
+
+    .pc-mobile-nav {
+        display: flex;
+        align-items: center;
+        margin-bottom: 12px;
+        padding-bottom: 10px;
+        border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    }
+
+    .pc-toolbar {
+        flex-wrap: wrap;
+    }
+
+    .pc-toolbar > div {
+        flex: 1 1 100% !important;
+    }
+
+    .pc-toolbar button {
+        flex: 1;
+        justify-content: center;
+    }
+
+    .pc-header h2 {
+        font-size: 1rem;
+    }
+
+/* Import Modal Styles */
+.pc-import-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 12px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 6px;
+    gap: 12px;
+}
+
+.pc-import-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.pc-import-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.pc-import-id {
+    opacity: 0.5;
+    font-family: monospace;
+    word-break: break-all;
+    white-space: normal;
+}
+
+.pc-import-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+@media (max-width: 768px) {
+    .pc-card-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 100%;
+    }
+
+    .pc-card-macros {
+        display: none;
+    }
+
+    .pc-card-id {
+        max-width: 12ch;
+        display: inline-block;
+        vertical-align: bottom;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .pc-import-name {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .pc-import-id {
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        max-width: 15ch;
+    }
+}
+
 
