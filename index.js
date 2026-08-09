@@ -11,7 +11,7 @@ import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '/scripts/popu
 import { SlashCommand } from '/scripts/slash-commands/SlashCommand.js';
 import { SlashCommandParser } from '/scripts/slash-commands/SlashCommandParser.js';
 import { t } from '/scripts/i18n.js';
-import { download } from '/scripts/utils.js';
+import { download, cancelDebounce } from '/scripts/utils.js';
 import { settingsToUpdate } from '/scripts/openai.js';
 import { eventSource, event_types } from '/scripts/events.js';
 
@@ -644,6 +644,13 @@ async function fastApplyPreset(presetIndex, presetName) {
 
     await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
     await eventSource.emit(event_types.PRESET_CHANGED, { apiId: 'openai', name: presetName });
+
+    if (pm) {
+        // Cancel the 1000ms delayed render that was just queued by the event listener
+        cancelDebounce(pm.renderDebounced);
+        // Manually trigger an immediate render (the dry-run is skipped via our flag)
+        pm.render();
+    }
 }
 
 // ─────────────────────────────────────────
