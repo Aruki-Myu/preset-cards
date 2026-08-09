@@ -379,25 +379,8 @@ class PCManagerCore {
             }
         });
 
-        let cardStartX = 0;
-        let cardStartY = 0;
-        let cardIsScrolling = false;
-
-        listEl.find('.pc-prompt-card').on('pointerdown touchstart', (e) => {
-            const evt = e.originalEvent?.touches ? e.originalEvent.touches[0] : (e.originalEvent || e);
-            cardStartX = evt.clientX || 0;
-            cardStartY = evt.clientY || 0;
-            cardIsScrolling = false;
-        }).on('pointermove touchmove', (e) => {
-            if (!cardStartX && !cardStartY) return;
-            const evt = e.originalEvent?.touches ? e.originalEvent.touches[0] : (e.originalEvent || e);
-            if (Math.abs((evt.clientX || 0) - cardStartX) > 10 || Math.abs((evt.clientY || 0) - cardStartY) > 10) {
-                cardIsScrolling = true;
-            }
-        }).on('click', (e) => {
-            if (listEl.hasClass('is-dragging') || cardIsScrolling) {
-                return;
-            }
+        listEl.find('.pc-prompt-card').on('click', (e) => {
+            if (listEl.hasClass('is-dragging')) return;
             this.editTargetId = $(e.currentTarget).data('id');
             this.showOverview = false;
             this.mobileShowRight = true;
