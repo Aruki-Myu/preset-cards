@@ -513,6 +513,8 @@ export async function openProfileEditorPopup(
         orderList.order = newOrder;
         await saveMeta(name, idx, readMeta(preset));
         deps.refreshActivePresetUI(name);
+        // 重渲染弹窗列表以更新条目序号
+        await renderDialog();
     }
 
     function refreshCounts(): void {

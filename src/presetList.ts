@@ -16,6 +16,8 @@ export interface ProfileEntryView {
     enabled: boolean;
     /** 该条目的角色（profile 覆盖值优先，否则预设原值，缺省 system），仅展示用。 */
     role?: string;
+    /** 顺序序号（1-based，两位显示），仅活动预设且条目在目标 prompt_order 中时有值。 */
+    index?: string;
     /** 该条目的当前正文（profile 解析 fields 或预设运行时值），仅用于搜索过滤，模板不渲染正文。 */
     content?: string;
     hasFields?: boolean;
@@ -110,6 +112,7 @@ export function buildProfileEntries(
             identifier: e.identifier,
             name: e.fields?.name ?? promptNames.get(e.identifier) ?? e.identifier,
             role: e.fields?.role ?? prompt?.role ?? 'system',
+            index: orderIdx !== undefined ? String(orderIdx + 1).padStart(2, '0') : undefined,
             content: e.fields?.content ?? prompt?.content,
             enabled: e.enabled,
             hasFields,

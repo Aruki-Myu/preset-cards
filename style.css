@@ -1666,6 +1666,63 @@
 }
 
 /* ---- PCManager 手机端：单栏列表 + 右栏覆盖（对齐上游 319c2da） ---- */
+/* 条目序号 + 拖拽把手（对齐上游 .pc-card-index） */
+.pc-drag-handle {
+    cursor: grab;
+    touch-action: none;
+    transition: background 0.2s ease, color 0.2s ease;
+}
+
+.pc-drag-handle:hover {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
+    color: var(--SmartThemeQuoteColor);
+}
+
+.pc-drag-handle:active {
+    cursor: grabbing !important;
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
+}
+
+.pc-drag-handle-icon {
+    display: inline-block !important;
+    opacity: 0.3;
+    transition: opacity 0.2s, transform 0.2s, color 0.2s;
+}
+
+.pc-prompt-card:hover .pc-drag-handle-icon {
+    opacity: 0.8;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.pc-drag-handle:hover .pc-drag-handle-icon {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.pc-card-index {
+    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--SmartThemeBodyColor);
+    min-width: 48px;
+    text-align: center;
+    margin-right: 8px;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 6px;
+    margin-left: -6px;
+    border-radius: 6px;
+    transition: background 0.2s, opacity 0.2s;
+    opacity: 0.6;
+}
+
+.pc-prompt-card:hover .pc-card-index {
+    opacity: 1;
+}
+
 .pc-role-badge {
     font-size: 0.7rem;
     text-transform: uppercase;

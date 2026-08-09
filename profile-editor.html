@@ -23,7 +23,10 @@
                 {{#each entries}}
                 <div class="pc-prompt-card {{#if this.hasPersistentDiff}}persistent{{/if}} {{#unless this.enabled}}disabled{{/unless}}" data-identifier="{{this.identifier}}">
                     {{#if this.orderable}}
-                    <i class="fa-solid fa-grip-vertical pc-drag-handle" title="{{../i18n.dragHandle}}"></i>
+                    <div class="pc-card-index pc-drag-handle" title="{{../i18n.dragHandle}}">
+                        <i class="fa-solid fa-grip-vertical pc-drag-handle-icon"></i>
+                        <span>{{this.index}}</span>
+                    </div>
                     {{/if}}
                     <div class="pc-card-title">
                         <span class="pc-card-name" title="{{this.name}}">{{this.name}}</span>
