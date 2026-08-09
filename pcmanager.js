@@ -245,7 +245,10 @@ class PCManagerCore {
             card.className = `pc-prompt-card ${orderItem.enabled ? '' : 'disabled'}`;
             card.dataset.id = prompt.identifier;
             card.innerHTML = `
-                <div class="pc-card-index" style="font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; font-size: 1.2rem; font-weight: 800; color: var(--SmartThemeBodyColor); opacity: 0.15; min-width: 32px; text-align: center; margin-right: 4px; pointer-events: none; user-select: none;">${String(currentIndex).padStart(2, '0')}</div>
+                <div class="pc-card-index pc-drag-handle" style="font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; font-size: 1.1rem; font-weight: 800; color: var(--SmartThemeBodyColor); opacity: 0.35; min-width: 36px; text-align: center; margin-right: 4px; user-select: none; display: flex; align-items: center; justify-content: center; gap: 3px;" title="按住拖动以排序">
+                    <i class="fa-solid fa-grip-vertical pc-drag-handle-icon" style="font-size: 0.8rem; opacity: 0.6;"></i>
+                    <span>${String(currentIndex).padStart(2, '0')}</span>
+                </div>
                 <div class="pc-card-header">
                     <span class="pc-card-title">
                         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 100%;">
@@ -269,6 +272,7 @@ class PCManagerCore {
         if (listEl.sortable('instance')) listEl.sortable('destroy');
         if (!isSearching) {
             listEl.sortable({
+                handle: '.pc-drag-handle',
                 delay: getSortableDelay(),
                 animation: 150,
                 ghostClass: 'pc-sortable-ghost',
@@ -483,13 +487,12 @@ class PCManagerCore {
             <div class="pc-form-group">
                 <label>位置</label>
                 <select class="pc-form-control" id="pc-edit-inj-pos" ${isHistory ? 'disabled' : ''}>
-                    <option value="0" ${prompt.injection_position === 0 ? 'selected' : ''}>Before Main Prompt</option>
-                    <option value="1" ${prompt.injection_position === 1 ? 'selected' : ''}>After Main Prompt</option>
-                    <option value="2" ${prompt.injection_position === 2 ? 'selected' : ''}>In Chat (Absolute Depth)</option>
+                    <option value="0" ${prompt.injection_position === 0 ? 'selected' : ''}>相对</option>
+                    <option value="2" ${prompt.injection_position === 2 ? 'selected' : ''}>插D</option>
                 </select>
             </div>
             <div class="pc-form-group" id="pc-edit-inj-depth-grp" style="display: ${prompt.injection_position === 2 ? 'flex' : 'none'};">
-                <label>Injection Depth (@)</label>
+                <label>注入深度</label>
                 <input type="number" class="pc-form-control" id="pc-edit-inj-depth" value="${prompt.injection_depth ?? 4}" min="0" ${isHistory ? 'disabled' : ''}>
             </div>
             <div class="pc-form-group">
