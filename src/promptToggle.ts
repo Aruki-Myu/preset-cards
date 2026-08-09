@@ -401,7 +401,7 @@ export function buildPromptSnapshot(
  * - 基线缺失的条目（新增 prompt 等）fields 全量写入；
  * - 与基线一致的条目不写 fields（加载时保持基线/当前值）。
  * 相比旧 buildPromptToggleSnapshot（仅开关），此快照让 add base 保留 content 差异，又避免全量 content 几百 KB。
- * baseline 传 null/undefined 时退化为纯开关快照（兼容旧数据）。
+ * baseline 传 null/undefined（或全无条目）时退化为「开关+全量 fields」快照（兼容旧数据）。
  */
 export function buildBaseSnapshotDiff(
     preset: Preset,
