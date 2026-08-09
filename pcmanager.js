@@ -474,7 +474,8 @@ class PCManagerCore {
             } else {
                 let text = prompt.content || prompt.prompt || '';
                 if (this.macroMode) {
-                    text = text.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, getvarName) => {
+                    let escapedText = escapeHtml(text);
+                    escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, getvarName) => {
                         if (commentGroup !== undefined) {
                             return ''; // Remove comment
                         } else if (setvarName !== undefined) {
@@ -482,14 +483,15 @@ class PCManagerCore {
                             return ''; // Remove setvar
                         } else if (getvarName !== undefined) {
                             const varName = getvarName.trim();
-                            return localVars[varName] !== undefined ? localVars[varName] : '';
+                            const val = localVars[varName] !== undefined ? localVars[varName] : '';
+                            return val ? `<span style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 0 4px; border-radius: 4px; border-bottom: 1px dashed rgba(59, 130, 246, 0.5);" title="变量已解析: ${varName}">${val}</span>` : '';
                         }
                         return match;
                     });
-
+                    
                     // Process {{trim}} (remove macro and adjacent newlines)
-                    text = text.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
-                    html += escapeHtml(text);
+                    escapedText = escapedText.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
+                    html += escapedText;
                 } else {
                     let escapedText = escapeHtml(text);
                     // Highlight setvar (green)
