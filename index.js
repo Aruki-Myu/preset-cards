@@ -571,12 +571,6 @@ async function fastApplyPreset(presetIndex, presetName) {
     const preset = openai_settings[presetIndex];
     if (!preset) return;
 
-    // Connection-bound presets need full native flow (source switching, model list rebuilds)
-    if (oai_settings.bind_preset_to_connection) {
-        $('#settings_preset_openai').val(presetIndex).trigger('change');
-        return;
-    }
-
     const presetNameBefore = oai_settings.preset_settings_openai;
     oai_settings.preset_settings_openai = presetName;
 
@@ -593,7 +587,9 @@ async function fastApplyPreset(presetIndex, presetName) {
 
     // ── Phase 2: Direct memory write — skip 100× jQuery .val().trigger() ──
     for (const [key, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
-        if (isConnection) continue; // connection fields skipped (bind_preset_to_connection is off)
+        if (isConnection && !oai_settings.bind_preset_to_connection) {
+            continue; // connection fields skipped when bind is off
+        }
         if (key === 'extensions') {
             oai_settings.extensions = preset.extensions || {};
             continue;
@@ -603,32 +599,43 @@ async function fastApplyPreset(presetIndex, presetName) {
         }
     }
 
-    // ── Phase 3: Batch DOM update in single animation frame ──
-    requestAnimationFrame(() => {
-        for (const [key, [selector, , isCheckbox]] of Object.entries(settingsToUpdate)) {
-            if (!selector || selector === '' || selector === '#NULL_SELECTOR') continue;
-            if (preset[key] === undefined) continue;
+    // ── Phase 3: Batch DOM update ──
+    if (oai_settings.bind_preset_to_connection) {
+        $('.model_custom_select').empty();
+    }
 
-            const el = document.querySelector(selector);
-            if (!el) continue;
+    for (const [key, [selector, , isCheckbox, isConnection]] of Object.entries(settingsToUpdate)) {
+        if (isConnection && !oai_settings.bind_preset_to_connection) continue;
+        if (!selector || selector === '' || selector === '#NULL_SELECTOR') continue;
+        if (preset[key] === undefined) continue;
 
-            if (isCheckbox) {
-                el.checked = !!preset[key];
-            } else {
-                el.value = preset[key];
-            }
+        const el = document.querySelector(selector);
+        if (!el) continue;
 
-            // Sync range slider numeric counters (no event trigger needed)
-            if (el.type === 'range' && el.id) {
-                const counter = document.querySelector(`input[type="number"][data-for="${el.id}"]`);
-                if (counter) counter.value = Number(preset[key]);
-            }
+        if (isCheckbox) {
+            el.checked = !!preset[key];
+        } else {
+            el.value = preset[key];
         }
 
-        // Update the native dropdown selection
-        const selectEl = document.querySelector('#settings_preset_openai');
-        if (selectEl) selectEl.value = String(presetIndex);
-    });
+        // Sync range slider numeric counters (no event trigger needed)
+        if (el.type === 'range' && el.id) {
+            const counter = document.querySelector(`input[type="number"][data-for="${el.id}"]`);
+            if (counter) counter.value = Number(preset[key]);
+        }
+    }
+
+    // Update the native dropdown selection
+    const selectEl = document.querySelector('#settings_preset_openai');
+    if (selectEl) selectEl.value = String(presetIndex);
+
+    // ── Phase 4: Special triggers ──
+    if (oai_settings.bind_preset_to_connection) {
+        $('#chat_completion_source').trigger('change');
+        $('#openrouter_providers_chat').trigger('change');
+        $('#openrouter_quantizations_chat').trigger('change');
+        $('#nanogpt_provider').trigger('change');
+    }
 
     // ── Phase 4: Logit bias preset (lightweight) ──
     $('#openai_logit_bias_preset').trigger('change');
