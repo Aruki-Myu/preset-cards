@@ -1859,6 +1859,10 @@ export function init() {
 
                 this.listElement.innerHTML = '';
                 this.listElement.insertAdjacentHTML('beforeend', htmlStr);
+                
+                if (typeof $(this.listElement).i18n === 'function') {
+                    $(this.listElement).i18n();
+                }
 
                 // Re-bind event listeners (same as original)
                 Array.from(this.listElement.getElementsByClassName('prompt-manager-detach-action')).forEach(el => {
@@ -1902,6 +1906,11 @@ export function init() {
                     await this.renderPromptManagerListItems();
                     if (typeof this.makeDraggable === 'function') this.makeDraggable();
                     if (typeof this.profileEnd === 'function') this.profileEnd('render');
+
+                    // Apply translation since we bypassed renderTemplateAsync
+                    if (this.containerElement && typeof $(this.containerElement).i18n === 'function') {
+                        $(this.containerElement).i18n();
+                    }
 
                     if (this.containerElement) this.containerElement.scrollTop = scrollPosition;
                     return;
@@ -2029,6 +2038,10 @@ export function init() {
 
                 footerDiv.querySelector('#prompt-manager-import').addEventListener('click', this.handleImport);
                 footerDiv.querySelector('#prompt-manager-export').addEventListener('click', this.handleFullExport);
+            }
+            
+            if (typeof $(promptManagerDiv).i18n === 'function') {
+                $(promptManagerDiv).i18n();
             }
         };
 
