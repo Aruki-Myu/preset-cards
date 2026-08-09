@@ -245,8 +245,8 @@ class PCManagerCore {
             card.className = `pc-prompt-card ${orderItem.enabled ? '' : 'disabled'}`;
             card.dataset.id = prompt.identifier;
             card.innerHTML = `
-                <div class="pc-card-index pc-drag-handle" style="font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; font-size: 1.1rem; font-weight: 800; color: var(--SmartThemeBodyColor); opacity: 0.35; min-width: 36px; text-align: center; margin-right: 4px; user-select: none; display: flex; align-items: center; justify-content: center; gap: 3px;" title="按住拖动以排序">
-                    <i class="fa-solid fa-grip-vertical pc-drag-handle-icon" style="font-size: 0.8rem; opacity: 0.6;"></i>
+                <div class="pc-card-index pc-drag-handle" title="按住此处拖动以排序">
+                    <i class="fa-solid fa-grip-vertical pc-drag-handle-icon"></i>
                     <span>${String(currentIndex).padStart(2, '0')}</span>
                 </div>
                 <div class="pc-card-header">
@@ -274,13 +274,15 @@ class PCManagerCore {
             listEl.sortable({
                 handle: '.pc-drag-handle',
                 delay: getSortableDelay(),
-                animation: 150,
+                delayOnTouchOnly: true,
+                animation: 250,
+                easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
                 ghostClass: 'pc-sortable-ghost',
                 dragClass: 'pc-sortable-drag',
                 start: () => listEl.addClass('is-dragging'),
                 stop: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
-                onStart: () => listEl.addClass('is-dragging'),
-                onEnd: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
+                onStart: () => { listEl.addClass('is-dragging'); document.body.style.cursor = 'grabbing'; },
+                onEnd: () => { setTimeout(() => listEl.removeClass('is-dragging'), 50); document.body.style.cursor = ''; },
                 update: (event, ui) => {
                     const newOrderIds = listEl.sortable('toArray', { attribute: 'data-id' });
                     this.transactionalState.promptOrder = newOrderIds.map(id => {

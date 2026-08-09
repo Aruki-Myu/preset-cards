@@ -891,14 +891,56 @@
 .pc-drag-handle {
     cursor: grab;
     touch-action: none;
+    transition: background 0.2s ease, color 0.2s ease;
 }
 
-.pc-drag-handle-icon {
-    display: none !important;
+.pc-drag-handle:hover {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
+    color: var(--SmartThemeQuoteColor);
 }
 
 .pc-drag-handle:active {
-    cursor: grabbing;
+    cursor: grabbing !important;
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
+}
+
+.pc-drag-handle-icon {
+    display: inline-block !important;
+    opacity: 0.3;
+    transition: opacity 0.2s, transform 0.2s;
+}
+
+.pc-prompt-card:hover .pc-drag-handle-icon {
+    opacity: 0.8;
+}
+
+.pc-drag-handle:hover .pc-drag-handle-icon {
+    opacity: 1;
+    transform: scale(1.1);
+}
+
+.pc-card-index {
+    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+    font-size: 1.1rem;
+    font-weight: 800;
+    color: var(--SmartThemeBodyColor);
+    min-width: 48px;
+    text-align: center;
+    margin-right: 8px;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 8px 6px;
+    margin-left: -6px;
+    border-radius: 6px;
+    transition: background 0.2s, opacity 0.2s;
+    opacity: 0.6;
+}
+
+.pc-prompt-card:hover .pc-card-index {
+    opacity: 1;
 }
 
 .pc-prompt-card:hover {
@@ -1058,15 +1100,19 @@
 }
 
 .pc-sortable-ghost {
-    opacity: 0.4;
-    background: var(--SmartThemeButtonHoverColor, rgba(255, 255, 255, 0.1));
+    opacity: 0.2 !important;
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1) !important;
+    border: 2px dashed var(--SmartThemeQuoteColor) !important;
+    border-radius: 6px;
 }
 
 .pc-sortable-drag {
     opacity: 1 !important;
-    background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.9));
-    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
-    transform: scale(1.02);
+    background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.9)) !important;
+    box-shadow: 0 16px 32px rgba(0,0,0,0.4), 0 0 0 2px var(--SmartThemeQuoteColor) !important;
+    transform: scale(1.02) rotate(1deg) !important;
+    cursor: grabbing !important;
+    z-index: 999999 !important;
 }
 
 .pc-diff-item {
