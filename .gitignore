@@ -1,0 +1,6 @@
+# Rust build artifacts and generated files
+rust-core/target/
+rust-core/**/*.rs.bk
+
+# If you also want to ignore Cargo.lock (optional for libraries, usually kept for binaries)
+# rust-core/Cargo.lock
