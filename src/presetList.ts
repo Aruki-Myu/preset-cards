@@ -2,6 +2,7 @@ import { oai_settings, openai_settings, openai_setting_names } from '@sillytaver
 import { AVAILABLE_MODELS, LOGO_BASE, MODEL_KEYS, SOURCE_LABELS, SOURCE_LOGO_MAP } from './constants.js';
 import { isPromptBaseProfile, isPromptDeltaProfile, readMeta, type Preset, type PresetMeta, type PresetProfile, type PromptBaseProfile, type PromptDeltaProfile } from './meta.js';
 import { findOrderList, resolveProfilePrompts, resolvePromptOrderTarget } from './promptToggle.js';
+import { getActiveProfile } from './activeProfile.js';
 import { L } from './i18n.js';
 
 export interface ModelChip {
@@ -144,6 +145,7 @@ export function buildProfileEntries(
 export function buildPresetList(): PresetCardModel[] {
     const currentPresetName = oai_settings.preset_settings_openai;
     const presets: PresetCardModel[] = [];
+    const activeRef = getActiveProfile();
 
     for (const [name, index] of Object.entries(openai_setting_names)) {
         const preset = openai_settings[index] as Preset | undefined;
@@ -191,7 +193,7 @@ export function buildPresetList(): PresetCardModel[] {
                 isV1: !isPromptBaseProfile(p) && !isPromptDeltaProfile(p),
                 parentName,
                 entries,
-                isActiveProfile: meta.activeProfileId === String(p.id),
+                isActiveProfile: !!activeRef && activeRef.presetName === name && activeRef.profileId === String(p.id),
             };
             return row;
         });

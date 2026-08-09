@@ -71,7 +71,7 @@ npm run build      # 生产构建，输出 dist/index.js（sourcemap 已禁用�
 
 - **Profile 编辑器弹窗**（7dc8c0b→77a743b）：点击 profile 名加载后自动打开 pcmanager 式左右栏编辑器（`src/profileEditor.ts` + `profile-editor.html`）。左栏 prompt 列表（1-based 序号、角色徽章、隐藏 identifier、开关、清除值变更、拖拽把手），右栏默认「暂存更改」diff（开关/值变更逐条 Undo），点条目或「查看暂存」进入内联编辑表单；顶部 **Commit** 统一落盘（更新当前配置 / 新建为子配置），关弹窗有未提交改动时弹「丢弃」确认，确认后缓冲清除（重新加载会整体覆盖 preset，无续编路径）。手机端（≤768px）右栏默认隐藏，点条目后右栏全宽覆盖列表。
 - **拖拽重排 + 脏标记**（0b257ee、4c3ec99）：仅活动预设可拖（搜索中禁用）；重排立即写入 `prompt_order` 并保存、**不进暂存 diff**；脏标记以弹窗打开时的原始顺序为基准（`initialOrderIndex`），拖回原位自动清除；序号在下次重渲染前保持原值。
-- **移除卡片行保存按钮**（77a743b）：保存统一走弹窗 Commit（原「覆盖为当前设置」floppy 保存按钮与 `.preset_card_profile_update` handler 删除）；meta 新增 `activeProfileId` 记录最近加载 profile，卡片页激活行加选中框特效，删除激活 profile 时清除。
+- **移除卡片行保存按钮**（77a743b）：保存统一走弹窗 Commit（原「覆盖为当前设置」floppy 保存按钮与 `.preset_card_profile_update` handler 删除）。
 - **injection_depth 入白名单**（7dc8c0b）：`PROMPT_FIELD_WHITELIST` 扩为 content / name / role / injection_position / injection_depth；编辑表单 Position 新增「In Chat Absolute Depth(2)」，选中时显示注入深度 number 输入。
 - **全预设锁定基线**（1f39053）：首次为该预设 add base 时幂等全量锁定 `defaultSnapshot`（含 `originalFields`）；base 改按「与基线差异」存储 content（`buildBaseSnapshotDiff`）；移除打开面板批量回填，reset 有可靠出厂基线。
 - **模块化拆分 + 公共例程**（b84e42e、8054ec3）：presetCards.ts 拆分出 presetBuffers / presetDirty / presetSnapshot / profileActions；抽取 `commitBufferedEditsToProfile`（统一 base/delta 提交，父链缺失 full-changes 全量回退 vs abort 报错）与 `deletePresetByName` 删除例程（单删/批删统一）。

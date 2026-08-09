@@ -39,6 +39,7 @@ import { applyBufferedEdits, clearBufferedForName, type PromptEditBuffer } from 
 import { applyDefaultOriginalFields, lockDefaultSnapshot } from './presetSnapshot.js';
 import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
 import { openProfileEditorPopup } from './profileEditor.js';
+import { getActiveProfile, setActiveProfile } from './activeProfile.js';
 
 export async function openPresetCards(): Promise<void> {
     let presets = buildPresetList();
@@ -76,11 +77,15 @@ export async function openPresetCards(): Promise<void> {
         }
     }
 
-    // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
+    // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图。重渲染前记住搜索词，渲染后回填。
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
+        const searchEl = dialog.find('#preset_cards_search');
+        const query = String(searchEl.val() ?? '');
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
         if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
+        if (query) dialog.find('#preset_cards_search').val(query);
+        if (isConciseMode) dialog.find('#preset_cards_concise_btn').addClass('active');
         dialog.find('#preset_cards_search').trigger('input');
     }
 
@@ -142,6 +147,11 @@ export async function openPresetCards(): Promise<void> {
         });
 
         if (!response.ok) return false;
+
+        const active = getActiveProfile();
+        if (active && active.presetName === nameToDelete) {
+            setActiveProfile(undefined);
+        }
 
         // V2：删除预设后清理其未提交缓冲（孤儿缓冲仅会在同一会话重建同名预设时被错误套用）
         clearBufferedForName(nameToDelete, sessionEdits, pendingToggles);
@@ -212,17 +222,24 @@ export async function openPresetCards(): Promise<void> {
             </div>`);
 
             row.on('click', async function () {
-                const profile = getProfile(meta, row.data('profile-id'));
+                const profileId = row.data('profile-id');
+                const profile = getProfile(meta, profileId);
                 if (!profile) return;
 
                 applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
 
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration loaded'));
+                setActiveProfile({ presetName: name, profileId: String(profileId) });
 
                 refreshActivePresetUI(name);
 
+                // 加载已整体覆盖 preset：清该预设的会话缓冲（与非简洁路径一致）
+                clearBufferedForName(name, sessionEdits, pendingToggles);
+
                 $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
+
+                await refreshGrid();
             });
 
             list.append(row);
@@ -557,8 +574,8 @@ export async function openPresetCards(): Promise<void> {
 
         applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], { showMissingToast: true });
 
-        // 记录最近加载的 profile 为激活（卡片页选中框特效，持久化）
-        meta.activeProfileId = String(profileId);
+        // 记录最近加载的 profile 为激活（卡片页选中框特效，全局唯一，localStorage 持久化）
+        setActiveProfile({ presetName: name, profileId: String(profileId) });
 
         if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
             // 主/派生 profile：保存到磁盘并同步运行态，然后打开 profile 编辑器弹窗
@@ -568,6 +585,9 @@ export async function openPresetCards(): Promise<void> {
 
             // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲（其他卡的缓冲保留）
             clearBufferedForName(name, sessionEdits, pendingToggles);
+
+            // 先刷新卡片网格让选中态全局切换，再开弹窗
+            await refreshGrid();
 
             await openProfileEditorPopup(
                 { sessionEdits, pendingToggles, refreshActivePresetUI, onGridRefresh: () => refreshGrid() },
@@ -586,6 +606,8 @@ export async function openPresetCards(): Promise<void> {
             }
 
             clearBufferedForName(name, sessionEdits, pendingToggles);
+
+            await refreshGrid();
         }
     });
 
@@ -732,8 +754,9 @@ export async function openPresetCards(): Promise<void> {
 
         const deleteIds = new Set([String(profileId), ...descendantIds]);
         meta.profiles = (meta.profiles || []).filter(p => !deleteIds.has(String(p.id)));
-        if (meta.activeProfileId !== undefined && deleteIds.has(meta.activeProfileId)) {
-            meta.activeProfileId = undefined;
+        const active = getActiveProfile();
+        if (active && active.presetName === name && deleteIds.has(active.profileId)) {
+            setActiveProfile(undefined);
         }
         await saveMeta(name, idx, meta);
 
