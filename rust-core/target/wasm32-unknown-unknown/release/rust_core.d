@@ -1,1 +1,0 @@
-E:\SillyTavern\SillyTavern\public\scripts\extensions\preset-cards\rust-core\target\wasm32-unknown-unknown\release\rust_core.wasm: E:\SillyTavern\SillyTavern\public\scripts\extensions\preset-cards\rust-core\src\lib.rs
