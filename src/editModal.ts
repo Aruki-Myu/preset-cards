@@ -66,7 +66,7 @@ export async function openEditModal(presetName: string, presetIndex: number, onS
 }
 
 /** 单个 prompt 值编辑表单：表单容器 + 收集函数。
- * 弹窗（openPromptEditPopup）与 profile-editor 右栏内联编辑共用。
+ * profile-editor 右栏内联编辑使用。
  * collectFields() 返回与基线（current）有净变化的字段；无变化返回 null。
  * 基线 current 为「预设原值叠加已缓冲编辑」的有效当前值；缺省以预设原值预填/比对。 */
 export interface PromptEditForm {
@@ -184,25 +184,4 @@ export function buildPromptEditForm(
     };
 
     return { container, collectFields };
-}
-
-// 打开单个 prompt 的值编辑弹窗，返回编辑后的字段（仅含变化项）；未变化 / 取消返回 null。
-export async function openPromptEditPopup(
-    preset: Preset,
-    identifier: string,
-    current?: PromptFields,
-): Promise<PromptFields | null> {
-    const prompt = findPromptInPreset(preset, identifier);
-    if (!prompt) return null;
-
-    const form = buildPromptEditForm(preset, identifier, current);
-
-    const result = await callGenericPopup(form.container, POPUP_TYPE.CONFIRM, '', {
-        okButton: t`Save`,
-        cancelButton: t`Cancel`,
-        allowVerticalScrolling: true,
-    });
-    if (result !== POPUP_RESULT.AFFIRMATIVE) return null;
-
-    return form.collectFields();
 }

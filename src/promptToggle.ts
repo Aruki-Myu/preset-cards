@@ -354,26 +354,6 @@ export function syncPromptOrder(
 }
 
 /**
- * 在目标 prompt_order 条目的 .order 数组内按 identifier 移动位置（delta = -1 上移 / +1 下移）。
- * 只重排 .order，绝不动单条 enabled、绝不动 prompts[] 顺序。
- * 旧对象格式 / 缺目标条目 / 越界时安全返回 false。
- */
-export function reorderPromptOrder(preset: Preset, identifier: string, delta: -1 | 1): boolean {
-    const list = findOrderList(preset, resolvePromptOrderTarget());
-    if (!list || !Array.isArray(list.order)) return false;
-    const order = list.order as { identifier: string }[];
-
-    const index = order.findIndex((o: any) => o && o.identifier === identifier);
-    if (index === -1) return false;
-    const newIndex = index + delta;
-    if (newIndex < 0 || newIndex >= order.length) return false;
-
-    const [moved] = order.splice(index, 1);
-    order.splice(newIndex, 0, moved);
-    return true;
-}
-
-/**
  * 采集预设全部 prompts 的开关 + 可选值字段快照。
  * 过滤逻辑与 buildPromptToggleSnapshot 共用；enabled 用 runtimeEnabledFor。
  * includeFields 含某 identifier 时附带 fields: capturePromptFields(prompt)。
