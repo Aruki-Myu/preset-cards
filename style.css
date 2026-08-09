@@ -892,6 +892,10 @@
     cursor: grabbing;
 }
 
+.pc-prompt-card.ui-sortable-helper {
+    transition: none !important;
+}
+
 .pc-drag-handle {
     cursor: grab;
     touch-action: none;
