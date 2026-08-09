@@ -1,53 +1,55 @@
-<div id="preset_profile_editor">
-    <div class="preset_profile_editor_header">
-        <div class="preset_profile_editor_title_area">
-            <div class="preset_profile_editor_title">
-                {{#if isBase}}<span class="preset_card_profile_badge badge_base">{{i18n.base}}</span>{{/if}}
-                {{#if isDelta}}{{#if parentName}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{i18n.delta}}</span>{{/if}}{{/if}}
-                <span class="preset_profile_editor_profile_name" title="{{profileName}}">{{profileName}}</span>
+<div id="preset_profile_editor" class="pc-manager-container">
+    <div class="pc-layout">
+        <div class="pc-left-pane">
+            <div class="pc-header">
+                <h2>
+                    <span class="pc-header-title-row">
+                        {{#if isBase}}<span class="preset_card_profile_badge badge_base">{{i18n.base}}</span>{{/if}}
+                        {{#if isDelta}}{{#if parentName}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{i18n.derivedFrom}}">{{i18n.delta}}</span>{{/if}}{{/if}}
+                        <span class="pc-header-profile-name" title="{{profileName}}">{{profileName}}</span>
+                    </span>
+                    <small class="pc-header-subtitle" title="{{presetName}}">{{presetName}}</small>
+                </h2>
+                <div class="pc-header-controls">
+                    <button id="pc-btn-view-staged" class="pc-top-action-btn" title="{{i18n.viewStaged}}"><i class="fa-solid fa-list-check"></i> {{i18n.viewStaged}} <span>({{stagedCount}})</span></button>
+                    <button id="pc-btn-commit" class="pc-top-action-btn pc-btn-commit" title="{{i18n.commit}}" {{#unless canCommit}}disabled{{/unless}}><i class="fa-solid fa-check"></i> {{i18n.commit}}</button>
+                    <button id="pc-btn-close" class="pc-top-action-btn" title="{{i18n.close}}"><i class="fa-solid fa-times"></i></button>
+                </div>
             </div>
-            <div class="preset_profile_editor_subtitle" title="{{presetName}}">{{presetName}}</div>
-        </div>
-        <div class="preset_profile_editor_actions">
-            <button id="preset_profile_editor_view_staged" class="menu_button" title="{{i18n.viewStaged}}">{{i18n.viewStaged}} ({{stagedCount}})</button>
-            <button id="preset_profile_editor_commit" class="menu_button" title="{{i18n.commit}}" {{#unless canCommit}}disabled{{/unless}}>{{i18n.commit}}</button>
-            <button id="preset_profile_editor_close" class="menu_button" title="{{i18n.close}}">{{i18n.close}}</button>
-        </div>
-    </div>
-    <div class="preset_profile_editor_body">
-        <div class="preset_profile_editor_left">
-            <div class="preset_profile_editor_search_wrapper">
-                <i class="fa-solid fa-magnifying-glass search_icon"></i>
-                <input type="text" id="preset_profile_editor_search" placeholder="{{i18n.searchPrompts}}" />
+            <div class="pc-search-bar">
+                <input type="text" id="pc-search-input" class="pc-form-control" placeholder="{{i18n.searchPrompts}}" style="width: 100%; box-sizing: border-box;" />
             </div>
-            <div class="preset_profile_editor_list">
+            <div class="pc-prompt-list" id="pc-prompt-list">
                 {{#each entries}}
-                <div class="preset_profile_entry {{#if this.hasPersistentDiff}}persistent{{/if}}" data-identifier="{{this.identifier}}">
-                    <i class="fa-solid fa-grip-vertical preset_profile_entry_handle" title="{{../i18n.dragHandle}}"></i>
-                    <div class="preset_profile_entry_name_wrap">
-                        <div class="preset_profile_entry_name" title="{{this.identifier}}">{{this.name}}</div>
-                        <div class="preset_profile_entry_identifier">#{{this.identifier}}</div>
+                <div class="pc-prompt-card {{#if this.hasPersistentDiff}}persistent{{/if}} {{#unless this.enabled}}disabled{{/unless}}" data-identifier="{{this.identifier}}">
+                    {{#if this.orderable}}
+                    <i class="fa-solid fa-grip-vertical pc-drag-handle" title="{{../i18n.dragHandle}}"></i>
+                    {{/if}}
+                    <div class="pc-card-title">
+                        <span class="pc-card-name" title="{{this.identifier}}">{{this.name}}</span>
+                        <small class="pc-card-id">#{{this.identifier}}</small>
                     </div>
                     {{#if this.clearable}}
-                    <button class="preset_profile_entry_clear" title="{{../i18n.clearValueChange}}">
+                    <button class="pc-card-clear" title="{{../i18n.clearValueChange}}">
                         <i class="fa-solid fa-eraser"></i>
                     </button>
                     {{/if}}
                     {{#if this.editable}}
-                    <span class="preset_profile_entry_toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../i18n.toggleEntry}}">
-                        {{#if this.enabled}}<i class="fa-solid fa-toggle-on"></i>{{else}}<i class="fa-solid fa-toggle-off"></i>{{/if}}
-                    </span>
+                    <button class="pc-btn-toggle {{#if this.enabled}}on{{else}}off{{/if}}" title="{{../i18n.toggleEntry}}">
+                        {{#if this.enabled}}<i class="fa-solid fa-toggle-on"></i> On{{else}}<i class="fa-solid fa-toggle-off"></i> Off{{/if}}
+                    </button>
                     {{/if}}
                 </div>
                 {{/each}}
                 {{#unless entries.length}}
-                <div class="preset_profile_entry_empty">{{i18n.noEntries}}</div>
+                <div class="pc-prompt-empty">{{i18n.noEntries}}</div>
                 {{/unless}}
-                <div id="preset_profile_editor_empty_search" class="preset_profile_entry_empty" style="display:none;">{{i18n.noSearchResults}}</div>
+                <div id="pc-prompt-empty-search" class="pc-prompt-empty" style="display:none;">{{i18n.noSearchResults}}</div>
             </div>
         </div>
-        <div class="preset_profile_editor_right">
-            <div id="preset_profile_editor_pane" class="preset_profile_editor_pane"></div>
+        <div class="pc-right-pane">
+            <div class="pc-diff-area" id="pc-diff-area"></div>
+            <div class="pc-edit-area" id="pc-edit-area" style="display:none;"></div>
         </div>
     </div>
 </div>

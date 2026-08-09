@@ -145,7 +145,7 @@ export async function openProfileEditorPopup(
     const { sessionEdits, pendingToggles } = deps;
     const prefix = bufferPrefix(name);
 
-    let dialog: JQuery<HTMLElement> = $('<div id="preset_profile_editor"></div>');
+    let dialog: JQuery<HTMLElement> = $('<div id="preset_profile_editor" class="pc-manager-container"></div>');
     let selectedIdentifier: string | null = null;
     let searchQuery = '';
     let popup: Popup;
@@ -256,22 +256,22 @@ export async function openProfileEditorPopup(
 
     // 把缓冲状态叠加到已渲染的条目列表（开关目标 / 编辑后的名字 / dirty 高亮）
     function applyBufferOverlay(): void {
-        dialog.find('.preset_profile_entry').each(function () {
+        dialog.find('.pc-prompt-card').each(function () {
             const entry = $(this);
             const identifier = String(entry.data('identifier'));
             const key = bufferKey(name, identifier);
             const toggleTarget = pendingToggles.get(key);
             const session = sessionEdits.get(key);
 
-            const toggle = entry.find('.preset_profile_entry_toggle');
+            const toggle = entry.find('.pc-btn-toggle');
             if (toggle.length && toggleTarget !== undefined) {
                 toggle.toggleClass('on', toggleTarget).toggleClass('off', !toggleTarget);
                 toggle.html(toggleTarget
-                    ? '<i class="fa-solid fa-toggle-on"></i>'
-                    : '<i class="fa-solid fa-toggle-off"></i>');
+                    ? '<i class="fa-solid fa-toggle-on"></i> On'
+                    : '<i class="fa-solid fa-toggle-off"></i> Off');
             }
             if (session?.edited.name !== undefined) {
-                entry.find('.preset_profile_entry_name').text(session.edited.name).attr('title', identifier);
+                entry.find('.pc-card-name').text(session.edited.name).attr('title', identifier);
             }
             if (sessionEdits.has(key) || pendingToggles.has(key)) {
                 entry.addClass('dirty');
@@ -284,81 +284,94 @@ export async function openProfileEditorPopup(
         const q = searchQuery.toLowerCase().trim();
         const contentById = new Map((ctx?.entries ?? []).map((e) => [e.identifier, (e.content ?? '').toLowerCase()]));
         let visible = 0;
-        dialog.find('.preset_profile_entry').each(function () {
+        dialog.find('.pc-prompt-card').each(function () {
             const identifier = String($(this).data('identifier'));
-            const name = $(this).find('.preset_profile_entry_name').text().toLowerCase();
+            const name = $(this).find('.pc-card-name').text().toLowerCase();
             const match = !q || name.includes(q) || (contentById.get(identifier) ?? '').includes(q) || identifier.toLowerCase().includes(q);
             $(this).toggle(match);
             if (match) visible++;
         });
-        dialog.find('#preset_profile_editor_empty_search').toggle(visible === 0 && q.length > 0);
+        dialog.find('#pc-prompt-empty-search').toggle(visible === 0 && q.length > 0);
     }
 
-    // 右栏渲染：有选中条目 → 内联编辑表单；否则 staged diff
+    // 右栏渲染：有选中条目 → #pc-edit-area 内联编辑表单；否则 #pc-diff-area staged diff
     function renderRightPane(): void {
-        const pane = dialog.find('#preset_profile_editor_pane');
-        pane.empty();
+        const diffArea = dialog.find('#pc-diff-area');
+        const editArea = dialog.find('#pc-edit-area');
         if (selectedIdentifier) {
             const ctx = currentCtx();
             const view = ctx?.entries.find((e) => e.identifier === selectedIdentifier);
             if (ctx && view?.editable) {
-                pane.append(buildInlineEdit(ctx.preset, selectedIdentifier));
+                editArea.empty().append(buildInlineEdit(ctx.preset, selectedIdentifier));
+                editArea.show();
+                diffArea.hide();
                 return;
             }
             // 条目不可编辑（system_prompt / marker / 缺失）→ 回退 staged 视图
             selectedIdentifier = null;
         }
+        editArea.hide();
+        diffArea.show();
         renderStagedPane();
     }
 
     function renderStagedPane(): void {
-        const pane = dialog.find('#preset_profile_editor_pane');
-        pane.empty();
-        pane.append($('<div class="preset_profile_pane_title"></div>').text(L('Staged Changes')));
+        const diffArea = dialog.find('#pc-diff-area');
+        diffArea.empty();
         const items = stagedItems();
         if (items.length === 0) {
-            pane.append($('<div class="preset_profile_pane_empty"></div>').text(L('No staged changes')));
+            diffArea.append($('<div class="pc-diff-empty"></div>').text(L('No staged changes')));
             return;
         }
+        diffArea.append($('<h3 class="pc-diff-title"></h3>').text(L('Staged Changes')));
+        const list = $('<ul class="pc-diff-list"></ul>');
         for (const item of items) {
-            const block = $('<div class="preset_profile_staged_item"></div>').attr('data-identifier', item.identifier);
-            const label = $('<div class="preset_profile_staged_label"></div>');
-            label.append($('<span class="preset_profile_staged_name"></span>').text(item.label));
-            label.append($('<span class="preset_profile_staged_identifier"></span>').text('#' + item.identifier));
-            block.append(label);
             if (item.toggle) {
-                block.append($('<div class="preset_profile_staged_line"></div>')
-                    .text(`${L('Switch')}: ${item.toggle.original ? L('On') : L('Off')} → ${item.toggle.target ? L('On') : L('Off')}`));
+                list.append($('<li class="pc-diff-item diff-toggle"></li>')
+                    .append($('<span class="pc-diff-desc"></span>').text(`${L('Switch')}: ${item.toggle.original ? L('On') : L('Off')} → ${item.toggle.target ? L('On') : L('Off')}`))
+                    .append(buildUndoBtn(item.key, item.identifier)));
             }
             for (const f of item.fields) {
-                block.append($('<div class="preset_profile_staged_line"></div>')
-                    .text(`${f.label}: ${f.from || '∅'} → ${f.to || '∅'}`));
+                list.append($('<li class="pc-diff-item diff-modify"></li>')
+                    .append($('<span class="pc-diff-desc"></span>').text(`${item.label}: ${f.from || '∅'} → ${f.to || '∅'}`))
+                    .append(buildUndoBtn(item.key, item.identifier)));
             }
-            const undo = $('<button class="menu_button preset_profile_staged_undo"></button>').text(L('Undo'));
-            undo.on('click', () => undoStaged(item.key, item.identifier));
-            block.append(undo);
-            pane.append(block);
         }
+        diffArea.append(list);
+    }
+
+    function buildUndoBtn(key: string, identifier: string): JQuery<HTMLElement> {
+        const undo = $('<button class="pc-btn-undo"></button>')
+            .append($('<i class="fa-solid fa-rotate-left"></i>'))
+            .append(' ' + L('Undo'));
+        undo.on('click', () => undoStaged(key, identifier));
+        return undo;
     }
 
     // 内联编辑表单：复用 editModal 的表单构造，保存写会话缓冲
     function buildInlineEdit(preset: Preset, identifier: string): JQuery<HTMLElement> {
         const prompt = findPromptInPreset(preset, identifier);
-        const wrap = $('<div class="preset_profile_inline_edit"></div>');
+        const wrap = $('<div class="pc-edit-form"></div>');
         if (!prompt) {
-            wrap.append($('<div class="preset_profile_pane_empty"></div>').text(L('No entries')));
+            wrap.append($('<div class="pc-diff-empty"></div>').text(L('No entries')));
             return wrap;
         }
-        wrap.append($('<div class="preset_profile_inline_header"></div>').text('#' + identifier));
+
+        const header = $('<div class="pc-editor-header"></div>');
+        header.append($('<h3></h3>').text('#' + identifier));
+        const actions = $('<div class="pc-editor-actions"></div>');
 
         const prevSession = sessionEdits.get(bufferKey(name, identifier));
         const current = prevSession ? { ...capturePromptFields(prompt), ...prevSession.edited } : undefined;
         const form = buildPromptEditForm(preset, identifier, current);
-        wrap.append(form.container);
 
-        const actions = $('<div class="preset_profile_inline_actions"></div>');
-        const saveBtn = $('<button class="menu_button"></button>').text(L('Save'));
-        const cancelBtn = $('<button class="menu_button"></button>').text(L('Cancel'));
+        const saveBtn = $('<button class="pc-btn-icon pc-btn-icon-primary" title="' + L('Save') + '"></button>')
+            .append($('<i class="fa-solid fa-save"></i>'))
+            .append(' ' + L('Save'));
+        const cancelBtn = $('<button class="pc-btn-icon" title="' + L('Cancel') + '"></button>')
+            .append($('<i class="fa-solid fa-times"></i>'))
+            .append(' ' + L('Cancel'));
+
         saveBtn.on('click', () => {
             const editedFields = form.collectFields();
             if (editedFields) {
@@ -382,13 +395,15 @@ export async function openProfileEditorPopup(
             renderStagedPane();
         });
         actions.append(saveBtn).append(cancelBtn);
-        wrap.append(actions);
+        header.append(actions);
+        wrap.append(header);
+        wrap.append(form.container);
         return wrap;
     }
 
     // 局部刷新单条 entry（名字/开关/dirty/clear 可见性）
     function refreshEntryRow(identifier: string): void {
-        const row = dialog.find(`.preset_profile_entry[data-identifier="${cssEscape(identifier)}"]`);
+        const row = dialog.find(`.pc-prompt-card[data-identifier="${cssEscape(identifier)}"]`);
         if (row.length === 0) return;
         const ctx = currentCtx();
         const view = ctx?.entries.find((e) => e.identifier === identifier);
@@ -398,25 +413,26 @@ export async function openProfileEditorPopup(
         const enabled = toggleTarget ?? view?.enabled ?? true;
         const displayName = session?.edited.name ?? view?.name ?? identifier;
 
-        row.find('.preset_profile_entry_name').text(displayName).attr('title', identifier);
+        row.find('.pc-card-name').text(displayName).attr('title', identifier);
 
-        const toggle = row.find('.preset_profile_entry_toggle');
+        const toggle = row.find('.pc-btn-toggle');
         if (toggle.length) {
             toggle.toggleClass('on', enabled).toggleClass('off', !enabled);
-            toggle.html(enabled ? '<i class="fa-solid fa-toggle-on"></i>' : '<i class="fa-solid fa-toggle-off"></i>');
+            toggle.html(enabled ? '<i class="fa-solid fa-toggle-on"></i> On' : '<i class="fa-solid fa-toggle-off"></i> Off');
         }
 
-        const clearBtn = row.find('.preset_profile_entry_clear');
+        const clearBtn = row.find('.pc-card-clear');
         const shouldHaveClear = !!view?.clearable;
         if (shouldHaveClear && clearBtn.length === 0) {
-            const btn = $('<button class="preset_profile_entry_clear" title="' + L('Clear value changes') + '"><i class="fa-solid fa-eraser"></i></button>');
-            const toggleEl = row.find('.preset_profile_entry_toggle');
+            const btn = $('<button class="pc-card-clear" title="' + L('Clear value changes') + '"><i class="fa-solid fa-eraser"></i></button>');
+            const toggleEl = row.find('.pc-btn-toggle');
             if (toggleEl.length) btn.insertBefore(toggleEl);
             else row.append(btn);
         } else if (!shouldHaveClear) {
             clearBtn.remove();
         }
 
+        row.toggleClass('disabled', !enabled);
         row.toggleClass('dirty', sessionEdits.has(key) || pendingToggles.has(key));
         row.toggleClass('persistent', !!view?.hasPersistentDiff);
     }
@@ -453,16 +469,16 @@ export async function openProfileEditorPopup(
 
     // 拖拽排序：仅活动预设可拖；拖拽后立即落盘（不进 diff）
     function setupSortable(): void {
-        const listEl = dialog.find('.preset_profile_editor_list');
+        const listEl = dialog.find('.pc-prompt-list');
         if (!listEl.length) return;
         if (listEl.data('ui-sortable')) listEl.sortable('destroy');
         const isActive = oai_settings.preset_settings_openai === name;
         if (!isActive || searchQuery) return;
         listEl.sortable({
             axis: 'y',
-            handle: '.preset_profile_entry_handle',
-            items: '.preset_profile_entry',
-            placeholder: 'preset_profile_entry_placeholder',
+            handle: '.pc-drag-handle',
+            items: '.pc-prompt-card',
+            placeholder: 'pc-sortable-placeholder',
             start: () => listEl.addClass('sorting'),
             stop: () => listEl.removeClass('sorting'),
             update: () => { void onReorder(listEl); },
@@ -474,7 +490,7 @@ export async function openProfileEditorPopup(
         const orderList = findOrderList(preset, resolvePromptOrderTarget());
         if (!orderList || !Array.isArray(orderList.order)) return;
 
-        const domIds = listEl.find('.preset_profile_entry').map(function () {
+        const domIds = listEl.find('.pc-prompt-card').map(function () {
             return String($(this).data('identifier'));
         }).get();
         const order = orderList.order as { identifier: string }[];
@@ -492,15 +508,15 @@ export async function openProfileEditorPopup(
 
     function refreshCounts(): void {
         const n = stagedItems().length;
-        dialog.find('#preset_profile_editor_view_staged').text(`${L('View Staged')} (${n})`);
-        const commitBtn = dialog.find('#preset_profile_editor_commit');
+        dialog.find('#pc-btn-view-staged span').text(`(${n})`);
+        const commitBtn = dialog.find('#pc-btn-commit');
         commitBtn.prop('disabled', n === 0);
         commitBtn.toggleClass('disabled', n === 0);
     }
 
     // ---- 事件（delegated，重渲染 innerHTML 后仍然有效） ----
-    dialog.on('click', '.preset_profile_entry', function (e) {
-        if ($(e.target).closest('.preset_profile_entry_handle, .preset_profile_entry_clear, .preset_profile_entry_toggle, button').length) return;
+    dialog.on('click', '.pc-prompt-card', function (e) {
+        if ($(e.target).closest('.pc-drag-handle, .pc-card-clear, .pc-btn-toggle, button').length) return;
         const identifier = String($(this).data('identifier'));
         const ctx = currentCtx();
         const view = ctx?.entries.find((x) => x.identifier === identifier);
@@ -509,10 +525,10 @@ export async function openProfileEditorPopup(
         renderRightPane();
     });
 
-    dialog.on('click', '.preset_profile_entry_toggle', function (e) {
+    dialog.on('click', '.pc-btn-toggle', function (e) {
         e.stopPropagation();
         const toggle = $(this);
-        const entry = toggle.closest('.preset_profile_entry');
+        const entry = toggle.closest('.pc-prompt-card');
         const identifier = String(entry.data('identifier'));
         const key = bufferKey(name, identifier);
         const on = toggle.hasClass('on');
@@ -537,9 +553,9 @@ export async function openProfileEditorPopup(
         if (!selectedIdentifier) renderStagedPane();
     });
 
-    dialog.on('click', '.preset_profile_entry_clear', function (e) {
+    dialog.on('click', '.pc-card-clear', function (e) {
         e.stopPropagation();
-        const entry = $(this).closest('.preset_profile_entry');
+        const entry = $(this).closest('.pc-prompt-card');
         const identifier = String(entry.data('identifier'));
         const key = bufferKey(name, identifier);
         const ctx = currentCtx();
@@ -585,12 +601,12 @@ export async function openProfileEditorPopup(
         refreshCounts();
     });
 
-    dialog.on('click', '#preset_profile_editor_view_staged', function () {
+    dialog.on('click', '#pc-btn-view-staged', function () {
         selectedIdentifier = null;
         renderStagedPane();
     });
 
-    dialog.on('click', '#preset_profile_editor_commit', async function () {
+    dialog.on('click', '#pc-btn-commit', async function () {
         const ctx = currentCtx();
         if (!ctx) return;
         if (stagedItems().length === 0) return;
@@ -637,11 +653,11 @@ export async function openProfileEditorPopup(
         await deps.onGridRefresh();
     });
 
-    dialog.on('click', '#preset_profile_editor_close', function () {
+    dialog.on('click', '#pc-btn-close', function () {
         popup.completeCancelled();
     });
 
-    dialog.on('input', '#preset_profile_editor_search', function () {
+    dialog.on('input', '#pc-search-input', function () {
         searchQuery = String($(this).val() ?? '');
         applySearch();
         setupSortable(); // 搜索中禁用拖拽

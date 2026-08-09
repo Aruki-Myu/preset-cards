@@ -1163,207 +1163,435 @@
     }
 }
 
-/* ===== Profile Editor popup（左右两栏） ===== */
-#preset_profile_editor {
+/* ===== PCManager ===== */
+
+.pc-manager-container {
     display: flex;
     flex-direction: column;
-    gap: 10px;
-    width: min(96vw, 980px);
-    max-width: 100%;
-    text-align: left;
-    height: min(80vh, 680px);
-    min-height: 320px;
+    position: fixed;
+    inset: 4vh 6vw;
+    z-index: 99999;
+    background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.85));
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+    border-radius: 16px;
+    padding: 20px;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+    color: var(--SmartThemeBodyColor);
+    font-family: var(--default-font, "Inter", sans-serif);
 }
 
-.preset_profile_editor_header {
+.pc-layout {
     display: flex;
-    align-items: center;
+    flex: 1;
+    gap: 20px;
+    min-height: 0;
+}
+
+.pc-left-pane {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    padding: 16px;
+    border: none;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+    overflow: hidden;
+}
+
+.pc-right-pane {
+    flex: 1.5;
+    display: flex;
+    flex-direction: column;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 12px;
+    padding: 16px;
+    border: none;
+    box-shadow: inset 0 2px 10px rgba(0,0,0,0.1);
+    overflow-y: auto;
+}
+
+.pc-header {
+    display: flex;
     justify-content: space-between;
-    gap: 12px;
-    flex-wrap: wrap;
-    flex-shrink: 0;
-}
-
-.preset_profile_editor_title_area {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-    min-width: 0;
-}
-
-.preset_profile_editor_title {
-    display: flex;
     align-items: center;
-    gap: 8px;
-    min-width: 0;
+    margin-bottom: 16px;
 }
 
-.preset_profile_editor_profile_name {
-    font-size: 18px;
-    font-weight: 700;
-    color: var(--SmartThemeBodyColor);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.pc-header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 600;
 }
 
-.preset_profile_editor_subtitle {
-    font-size: 11px;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.45;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.preset_profile_editor_actions {
+.pc-header-controls {
     display: flex;
+    gap: 8px;
     align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
 }
 
-#preset_profile_editor_commit:disabled {
-    opacity: 0.4;
-    cursor: default;
-    pointer-events: none;
-}
-
-.preset_profile_editor_body {
-    display: flex;
-    gap: 12px;
+.pc-prompt-list {
     flex: 1;
-    min-height: 0;
-}
-
-.preset_profile_editor_left {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    width: 46%;
-    min-width: 0;
-    flex-shrink: 0;
-}
-
-.preset_profile_editor_right {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-}
-
-.preset_profile_editor_search_wrapper {
-    position: relative;
-    flex-shrink: 0;
-}
-
-.preset_profile_editor_search_wrapper .search_icon {
-    position: absolute;
-    left: 11px;
-    top: 50%;
-    transform: translateY(-50%);
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.4;
-    pointer-events: none;
-    font-size: 12px;
-}
-
-#preset_profile_editor_search {
-    width: 100%;
-    padding: 8px 12px 8px 32px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    background: var(--SmartThemeBlurTintColor);
-    color: var(--SmartThemeBodyColor);
-    font-size: 13px;
-    outline: none;
-}
-
-#preset_profile_editor_search:focus {
-    border-color: var(--SmartThemeQuoteColor);
-}
-
-.preset_profile_editor_list {
-    flex: 1;
-    min-height: 0;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 2px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.08);
+    gap: 12px;
+    padding-right: 8px;
 }
 
-/* 大字条目行 */
-.preset_profile_entry {
+.pc-prompt-card {
+    background: var(--SmartThemeButtonDisplayColor, rgba(255, 255, 255, 0.05));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    transition: all 0.2s ease;
+    cursor: pointer;
+}
+
+.pc-prompt-card:hover {
+    background: var(--SmartThemeButtonHoverColor, rgba(255, 255, 255, 0.1));
+    border-color: var(--SmartThemeButtonBorderColor, rgba(255, 255, 255, 0.2));
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.pc-prompt-card.disabled {
+    opacity: 0.5;
+    filter: grayscale(1);
+}
+
+.pc-card-header {
     display: flex;
     align-items: center;
-    gap: 10px;
-    padding: 10px 12px;
+    gap: 12px;
+    flex: 1;
+}
+
+.pc-card-title {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    flex: 1;
+    min-width: 0;
+}
+
+.pc-card-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.pc-card-id {
+    font-family: monospace;
+    font-size: 0.75rem;
+    color: var(--SmartThemeQuoteColor, #888);
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
+}
+
+.pc-role-badge {
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-weight: 700;
+}
+
+.pc-role-badge.role-system { background: rgba(59, 130, 246, 0.2); color: #60a5fa; }
+.pc-role-badge.role-user { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.pc-role-badge.role-assistant { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
+
+.pc-card-macros {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    flex: 2;
+}
+
+.pc-macro-badge {
+    font-size: 0.7rem;
+    background: rgba(255, 255, 255, 0.1);
+    color: var(--SmartThemeBodyColor);
+    padding: 3px 6px;
+    border-radius: 4px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.pc-macro-badge i {
+    color: var(--SmartThemeQuoteColor, #888);
+}
+
+.pc-card-controls {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.pc-btn-toggle {
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    padding: 4px 12px;
     border-radius: 6px;
-    background: var(--SmartThemeBlurTintColor);
-    border: 1px solid transparent;
     cursor: pointer;
-    font-size: 14px;
-    transition: border-color 0.15s ease, background 0.15s ease;
+    font-size: 0.8rem;
+    transition: background 0.15s;
 }
 
-.preset_profile_entry:hover {
-    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.3);
+.pc-btn-toggle:hover {
+    background: rgba(255, 255, 255, 0.1);
 }
 
-.preset_profile_entry.persistent {
+.pc-top-action-btn {
+    background: var(--SmartThemeButtonDisplayColor, rgba(255,255,255,0.05));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+    color: var(--SmartThemeBodyColor);
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+}
+
+.pc-top-action-btn:hover {
+    background: var(--SmartThemeButtonHoverColor, rgba(255,255,255,0.1));
+}
+
+.pc-btn-commit {
+    background: #3b82f6;
+    color: white;
+    border: none;
+    box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.pc-btn-commit:hover {
+    background: #2563eb;
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.pc-btn-commit:disabled {
+    background: rgba(255,255,255,0.1);
+    color: rgba(255, 255, 255, 0.3);
+    box-shadow: none;
+    cursor: not-allowed;
+}
+
+/* Staging Area */
+.pc-diff-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.pc-sortable-ghost {
+    opacity: 0.4;
+    background: var(--SmartThemeButtonHoverColor, rgba(255, 255, 255, 0.1));
+}
+
+.pc-sortable-drag {
+    opacity: 1 !important;
+    background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.9));
+    box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+    transform: scale(1.02);
+}
+
+.pc-diff-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px;
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.2);
+    border-left: 4px solid transparent;
+}
+
+.pc-diff-item.diff-reorder { border-left-color: #3b82f6; }
+.pc-diff-item.diff-toggle { border-left-color: #f59e0b; }
+.pc-diff-item.diff-modify { border-left-color: #8b5cf6; }
+.pc-diff-item.diff-delete { border-left-color: #ef4444; }
+.pc-diff-item.diff-added { border-left-color: #10b981; }
+
+.pc-btn-undo {
+    background: transparent;
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+}
+.pc-btn-undo:hover {
+    background: rgba(255, 255, 255, 0.1);
+}
+
+/* Edit Form */
+.pc-editor-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+}
+
+.pc-editor-header h3 {
+    margin: 0;
+    font-size: 1.15rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.pc-editor-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.pc-btn-icon {
+    background: var(--SmartThemeButtonDisplayColor, rgba(255,255,255,0.05));
+    border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,0.1));
+    color: var(--SmartThemeBodyColor);
+    padding: 6px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.pc-btn-icon:hover {
+    background: var(--SmartThemeButtonHoverColor, rgba(255,255,255,0.1));
+}
+
+.pc-btn-icon-primary {
+    background: #3b82f6;
+    color: white;
+    border: none;
+}
+
+.pc-btn-icon-primary:hover {
+    background: #2563eb;
+}
+
+.pc-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 16px;
+}
+
+.pc-form-group label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.pc-form-control {
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--SmartThemeBorderColor);
+    color: var(--SmartThemeBodyColor);
+    padding: 8px 12px;
+    border-radius: 6px;
+    font-family: inherit;
+    font-size: 0.95rem;
+    resize: vertical;
+}
+
+.pc-form-control:focus {
+    outline: none;
+    border-color: #3b82f6;
+}
+
+/* ===== Profile Editor popup：pcmanager 移植定制 ===== */
+
+/* 搜索栏分隔线 */
+.pc-search-bar {
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+}
+
+/* 头部：profile 名 + 徽章 + 下方小字 preset 名 */
+.pc-header h2 {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 0;
+    flex: 1;
+}
+
+.pc-header-title-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 0;
+}
+
+.pc-header-profile-name {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+.pc-header-subtitle {
+    font-size: 0.7rem;
+    font-weight: normal;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.5;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* 卡片高亮：dirty（会话缓冲未提交）与 persistent（本 profile 持久差异） */
+.pc-prompt-card.persistent {
     background: rgba(255, 180, 50, 0.10);
     box-shadow: inset 3px 0 0 rgba(255, 180, 50, 0.7);
 }
 
-.preset_profile_entry.dirty {
+.pc-prompt-card.dirty {
     background: rgba(80, 180, 255, 0.10);
     box-shadow: inset 3px 0 0 rgba(80, 180, 255, 0.7);
 }
 
+/* 卡片名字大字（对齐旧 .preset_profile_entry_name 字号） */
+.pc-prompt-card .pc-card-name {
+    font-size: 14px;
+    font-weight: 600;
+}
+
 /* 拖拽把手 */
-.preset_profile_entry_handle {
+.pc-drag-handle {
     color: var(--SmartThemeBodyColor);
     opacity: 0.35;
     cursor: grab;
     flex-shrink: 0;
 }
 
-.preset_profile_entry_handle:active {
+.pc-drag-handle:active {
     cursor: grabbing;
 }
 
-.preset_profile_entry_name_wrap {
-    flex: 1;
-    min-width: 0;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-}
-
-.preset_profile_entry_name {
-    font-size: 14px;
-    font-weight: 600;
-    color: var(--SmartThemeBodyColor);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.preset_profile_entry_identifier {
-    font-size: 11px;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.45;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    font-family: monospace;
-}
-
-.preset_profile_entry_clear {
+/* 清除按钮 */
+.pc-card-clear {
     flex-shrink: 0;
     display: flex;
     align-items: center;
@@ -1381,150 +1609,58 @@
     transition: opacity 0.15s ease, color 0.15s ease, background 0.15s ease;
 }
 
-.preset_profile_entry_clear:hover {
+.pc-card-clear:hover {
     opacity: 1;
     color: #f44336;
     background: rgba(244, 67, 54, 0.12);
 }
 
-.preset_profile_entry_toggle {
-    flex-shrink: 0;
-    font-size: 18px;
-    cursor: pointer;
-}
-
-.preset_profile_entry_toggle.on {
+/* 开关按钮状态色 */
+.pc-btn-toggle.on {
+    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.5);
     color: var(--SmartThemeQuoteColor);
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
 }
 
-.preset_profile_entry_toggle.off {
+.pc-btn-toggle.off {
     color: rgba(128, 128, 128, 0.7);
 }
 
-.preset_profile_entry_placeholder {
+/* 拖拽占位 */
+.pc-sortable-placeholder {
     height: 44px;
     border: 1px dashed rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.6);
     border-radius: 6px;
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.08);
 }
 
-.preset_profile_editor_list.sorting .preset_profile_entry {
+.pc-prompt-list.sorting .pc-prompt-card {
     opacity: 0.6;
 }
 
-.preset_profile_entry_empty {
+/* 空提示 */
+.pc-prompt-empty {
     font-size: 12px;
     color: rgba(128, 128, 128, 0.8);
     text-align: center;
     padding: 16px 0;
 }
 
-/* 右栏 */
-.preset_profile_editor_pane {
-    flex: 1;
-    min-height: 0;
-    overflow-y: auto;
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    border: 1px solid var(--SmartThemeBorderColor);
-    border-radius: 8px;
-    background: rgba(0, 0, 0, 0.08);
-    padding: 12px;
-}
-
-.preset_profile_pane_title {
-    font-size: 12px;
-    font-weight: 700;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.6;
-    text-transform: uppercase;
-    letter-spacing: 1px;
-    margin-bottom: 2px;
-}
-
-.preset_profile_pane_empty {
+.pc-diff-empty {
     font-size: 13px;
     color: rgba(128, 128, 128, 0.8);
     text-align: center;
     padding: 20px 0;
 }
 
-/* staged diff 项 */
-.preset_profile_staged_item {
+.pc-diff-title {
+    margin: 0 0 12px;
+    font-size: 1rem;
+}
+
+/* 内联编辑容器 */
+.pc-edit-form {
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    padding: 10px 12px;
-    border-radius: 6px;
-    background: var(--SmartThemeBlurTintColor);
-    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
-}
-
-.preset_profile_staged_label {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    min-width: 0;
-}
-
-.preset_profile_staged_name {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--SmartThemeBodyColor);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.preset_profile_staged_identifier {
-    font-size: 11px;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.45;
-    font-family: monospace;
-}
-
-.preset_profile_staged_line {
-    font-size: 12px;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.85;
-    word-break: break-all;
-}
-
-.preset_profile_staged_undo {
-    align-self: flex-end;
-    font-size: 12px;
-    padding: 3px 10px;
-    border-radius: 5px;
-    cursor: pointer;
-}
-
-/* 内联编辑表单 */
-.preset_profile_inline_edit {
-    display: flex;
-    flex-direction: column;
-    gap: 12px;
-}
-
-.preset_profile_inline_header {
-    font-size: 12px;
-    color: var(--SmartThemeBodyColor);
-    opacity: 0.5;
-    font-family: monospace;
-}
-
-.preset_profile_inline_actions {
-    display: flex;
-    gap: 8px;
-    justify-content: flex-end;
-}
-
-@media (max-width: 640px) {
-    .preset_profile_editor_body {
-        flex-direction: column;
-    }
-    .preset_profile_editor_left {
-        width: 100%;
-        max-height: 40%;
-    }
+    gap: 16px;
 }
