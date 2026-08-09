@@ -286,7 +286,7 @@ class PCManagerCore {
         if (!isSearching) {
             listEl.sortable({
                 delay: getSortableDelay(),
-                handle: typeof isMobile === 'function' && isMobile() ? '.pc-drag-handle' : null,
+                handle: '.pc-drag-handle',
                 items: '.pc-prompt-card',
                 cancel: 'input, textarea, button, select, option, .pc-btn-toggle, .pc-btn-remove, .pc-var-badge, .pc-card-id',
                 tolerance: 'pointer',
