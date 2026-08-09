@@ -1780,10 +1780,13 @@ export function init() {
             };
 
             const origRender = pm.render.bind(pm);
-            pm.render = async function(afterTryGenerate = false) {
+            pm.render = async function(afterTryGenerate = true) {
                 if (this._skipNextTryGenerate) {
                     this._skipNextTryGenerate = false;
-                    return origRender(true); // true means skip tryGenerate
+                    // Passing a truthy non-boolean value like 'skip' bypasses the `!afterTryGenerate` check
+                    // AND fails the strict `true === afterTryGenerate` check, falling through to the `else` branch
+                    // which renders the UI directly without calling tryGenerate!
+                    return origRender('skip'); 
                 }
                 return origRender(afterTryGenerate);
             };
