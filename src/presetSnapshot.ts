@@ -1,24 +1,22 @@
 // defaultSnapshot（隐藏默认基准）的生成、合并与应用。
 // 纯数据操作 + ST openai 全局；不接触 dialog/DOM。
 
-import { openai_settings, openai_setting_names } from '@sillytavern/scripts/openai';
 import type { Preset, PresetMeta, PromptBaseProfile, PromptFields } from './meta.js';
 import { readMeta, saveMeta } from './meta.js';
 import type { PromptEditBuffer } from './presetBuffers.js';
 import { bufferKey, bufferPrefix } from './presetBuffers.js';
-import { buildPromptToggleSnapshot, findPromptInPreset, filterFields, promptFieldsEqual } from './promptToggle.js';
+import { buildDefaultSnapshotLock, findPromptInPreset, filterFields, promptFieldsEqual } from './promptToggle.js';
 
-// Backfill a hidden default snapshot for presets that don't have one yet.
-// Called once when the dialog opens, so "reset" always has a baseline.
-export async function ensureDefaultSnapshots(): Promise<void> {
-    for (const [name, index] of Object.entries(openai_setting_names)) {
-        const preset = openai_settings[index] as Preset | undefined;
-        if (!preset) continue;
-        const meta = readMeta(preset);
-        if (meta.defaultSnapshot && meta.defaultSnapshot.length > 0) continue;
-        meta.defaultSnapshot = buildPromptToggleSnapshot(preset);
-        await saveMeta(name, index as number, meta);
-    }
+// 首次对该预设 add base 时全量锁定默认基线：采集全部 prompts 的 {identifier, enabled, originalFields}（白名单4键全量）
+// 写入 meta.defaultSnapshot 并持久化。幂等：defaultSnapshotLocked 为 true 时不覆盖（仅首次点加号锁定一次）。
+// 取代旧 ensureDefaultSnapshots 的「仅开关快照 + 打开面板批量回填」——现在只在用户对该预设首次 add base 时锁定，
+// 提供 reset 的可靠出厂基线，也让 add base 能按「与基线的差异」存储（见 buildBaseSnapshotDiff）。
+export async function lockDefaultSnapshot(preset: Preset, name: string, idx: number): Promise<void> {
+    const meta = readMeta(preset);
+    if (meta.defaultSnapshotLocked) return;
+    meta.defaultSnapshot = buildDefaultSnapshotLock(preset);
+    meta.defaultSnapshotLocked = true;
+    await saveMeta(name, idx, meta);
 }
 
 // 把当前开关/值快照合并进主 profile（「保存→更新」与「覆盖」共用）：

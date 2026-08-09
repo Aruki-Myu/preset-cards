@@ -1,7 +1,7 @@
 import { oai_settings, promptManager } from '@sillytavern/scripts/openai';
 import { L } from './i18n.js';
 import { isPromptBaseProfile, isPromptDeltaProfile } from './meta.js';
-import type { Preset, PresetProfile, PromptBaseProfile, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
+import type { Preset, PresetProfile, PromptBaseProfile, PromptDefaultSnapshotEntry, PromptDeltaChange, PromptDeltaProfile, PromptFields } from './meta.js';
 
 /** 允许写入预设的值字段白名单；capture/apply 只处理这些键（R10 白名单兜底）。
  * injection_position 为用户可编辑字段，随 profile 捕获/应用；
@@ -109,6 +109,21 @@ export function buildPromptToggleSnapshot(preset: Preset): { identifier: string;
     return preset.prompts
         .filter((p: any) => p && typeof p.identifier === 'string' && p.identifier)
         .map((p: any) => ({ identifier: p.identifier, enabled: runtimeEnabledFor(p, preset) }));
+}
+
+/**
+ * 全量锁定快照：采集预设全部 prompts 的开关 + 白名单值字段（originalFields）。
+ * 作为 reset 的出厂基线（lockDefaultSnapshot 用），区别于仅开关的 buildPromptToggleSnapshot。
+ */
+export function buildDefaultSnapshotLock(preset: Preset): PromptDefaultSnapshotEntry[] {
+    if (!Array.isArray(preset.prompts)) return [];
+    return preset.prompts
+        .filter((p: any) => p && typeof p.identifier === 'string' && p.identifier)
+        .map((p: any) => ({
+            identifier: p.identifier,
+            enabled: runtimeEnabledFor(p, preset),
+            originalFields: capturePromptFields(p),
+        }));
 }
 
 /**
@@ -375,6 +390,51 @@ export function buildPromptSnapshot(
             };
             if (opts?.includeFields?.has(p.identifier)) {
                 entry.fields = capturePromptFields(p);
+            }
+            return entry;
+        });
+}
+
+/**
+ * 基于锁定基线的 base 快照（add base 用）：
+ * enabled 全量采集（base 语义 = 完整开关快照）；fields 只存「与基线 originalFields 有差异的白名单字段」。
+ * - 基线缺失的条目（新增 prompt 等）fields 全量写入；
+ * - 与基线一致的条目不写 fields（加载时保持基线/当前值）。
+ * 相比旧 buildPromptToggleSnapshot（仅开关），此快照让 add base 保留 content 差异，又避免全量 content 几百 KB。
+ * baseline 传 null/undefined 时退化为纯开关快照（兼容旧数据）。
+ */
+export function buildBaseSnapshotDiff(
+    preset: Preset,
+    baseline: PromptDefaultSnapshotEntry[] | null | undefined,
+): { identifier: string; enabled: boolean; fields?: PromptFields }[] {
+    if (!Array.isArray(preset.prompts)) return [];
+    const baselineFields = new Map<string, PromptFields>();
+    if (Array.isArray(baseline)) {
+        for (const entry of baseline) {
+            if (entry.originalFields) baselineFields.set(entry.identifier, entry.originalFields);
+        }
+    }
+    return preset.prompts
+        .filter((p: any) => p && typeof p.identifier === 'string' && p.identifier)
+        .map((p: any) => {
+            const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
+                identifier: p.identifier,
+                enabled: runtimeEnabledFor(p, preset),
+            };
+            const current = capturePromptFields(p);
+            const base = baselineFields.get(p.identifier);
+            if (base) {
+                const diff: Record<string, any> = {};
+                let hasDiff = false;
+                for (const key of PROMPT_FIELD_WHITELIST) {
+                    if (current[key] !== undefined && current[key] !== base[key]) {
+                        diff[key] = current[key];
+                        hasDiff = true;
+                    }
+                }
+                if (hasDiff) entry.fields = filterFields(diff);
+            } else if (Object.keys(current).length > 0) {
+                entry.fields = current;
             }
             return entry;
         });

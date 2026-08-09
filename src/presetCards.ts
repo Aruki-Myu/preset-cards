@@ -25,8 +25,8 @@ import {
     PROMPT_FIELD_WHITELIST,
     applyBaseProfile,
     applyProfileToPreset,
+    buildBaseSnapshotDiff,
     buildPromptSnapshot,
-    buildPromptToggleSnapshot,
     capturePromptFields,
     filterFields,
     findPromptInPreset,
@@ -50,13 +50,10 @@ import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal, openPromptEditPopup } from './editModal.js';
 import { applyBufferedEdits, bufferKey, clearBufferedForName, editedIdentifiersForName, type PromptEditBuffer } from './presetBuffers.js';
 import { applyDirtyHighlights, syncRowModified } from './presetDirty.js';
-import { applyDefaultOriginalFields, ensureDefaultSnapshots, mergeBaseSnapshot, recordDefaultOriginalFields } from './presetSnapshot.js';
+import { applyDefaultOriginalFields, lockDefaultSnapshot, mergeBaseSnapshot, recordDefaultOriginalFields } from './presetSnapshot.js';
 import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
 
 export async function openPresetCards(): Promise<void> {
-    // Backfill hidden default snapshots before rendering so reset always has a baseline
-    await ensureDefaultSnapshots();
-
     let presets = buildPresetList();
 
     let isBatchMode = false;
@@ -575,6 +572,10 @@ export async function openPresetCards(): Promise<void> {
         }
 
         const preset = openai_settings[idx] as Preset;
+
+        // 首次对该预设 add base：先全量锁定默认基线（编辑前状态），幂等。reset 与 add base 基线 diff 都依赖它。
+        await lockDefaultSnapshot(preset, name, idx);
+
         const meta = readMeta(preset);
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
 
@@ -584,12 +585,13 @@ export async function openPresetCards(): Promise<void> {
             toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
         }
 
+        // 与锁定基线做差异：fields 只存与基线不同的字段（content 差异进 base，又避免全量 content 快照）
         profiles.push({
             formatVersion: 2,
             kind: 'prompt_base',
             id: newProfileId(),
             name: profileName,
-            prompts: buildPromptToggleSnapshot(preset),
+            prompts: buildBaseSnapshotDiff(preset, meta.defaultSnapshot),
         });
 
         meta.profiles = profiles;
