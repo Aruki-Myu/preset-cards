@@ -149,6 +149,8 @@ export async function openProfileEditorPopup(
     let searchQuery = '';
     let editTargetId: string | null = null;
     let mobileShowRight = false;
+    /** 本会话拖拽重排过的条目（打脏标记，立即保存不进 diff；序号保持不更新）。 */
+    const reorderedIds = new Set<string>();
     let popup: Popup;
 
     // 读取当前预设/元数据/profile 解析后的展示条目（每次调用取最新内存态，clear 等直接改内存对象）
@@ -276,7 +278,7 @@ export async function openProfileEditorPopup(
             if (session?.edited.name !== undefined) {
                 entry.find('.pc-card-name').text(session.edited.name).attr('title', identifier);
             }
-            if (sessionEdits.has(key) || pendingToggles.has(key)) {
+            if (sessionEdits.has(key) || pendingToggles.has(key) || reorderedIds.has(identifier)) {
                 entry.addClass('dirty');
             }
         });
@@ -442,7 +444,7 @@ export async function openProfileEditorPopup(
         }
 
         row.toggleClass('disabled', !enabled);
-        row.toggleClass('dirty', sessionEdits.has(key) || pendingToggles.has(key));
+        row.toggleClass('dirty', sessionEdits.has(key) || pendingToggles.has(key) || reorderedIds.has(identifier));
         row.toggleClass('persistent', !!view?.hasPersistentDiff);
     }
 
@@ -510,11 +512,19 @@ export async function openProfileEditorPopup(
         ];
         if (newOrder.length === order.length && newOrder.every((o, i) => o.identifier === order[i].identifier)) return;
 
+        // 被移动的条目：位置变化的打脏标记（序号保持不更新）
+        const oldIndex = new Map(order.map((o, i) => [o.identifier, i]));
+        const newIndex = new Map(newOrder.map((o, i) => [o.identifier, i]));
+        for (const o of newOrder) {
+            if (oldIndex.get(o.identifier) !== newIndex.get(o.identifier)) {
+                reorderedIds.add(o.identifier);
+                refreshEntryRow(o.identifier);
+            }
+        }
+
         orderList.order = newOrder;
         await saveMeta(name, idx, readMeta(preset));
         deps.refreshActivePresetUI(name);
-        // 重渲染弹窗列表以更新条目序号
-        await renderDialog();
     }
 
     function refreshCounts(): void {
@@ -664,6 +674,7 @@ export async function openProfileEditorPopup(
 
         // 本批编辑已消费，清空当前 name 的记录（其他卡的缓冲保留）
         clearBufferedForName(name, sessionEdits, pendingToggles);
+        reorderedIds.clear();
         editTargetId = null;
         mobileShowRight = false;
 

@@ -1572,6 +1572,12 @@
     box-shadow: inset 3px 0 0 rgba(80, 180, 255, 0.7);
 }
 
+/* 关闭(disabled)条目的灰显不覆盖修改(dirty)的颜色提示 */
+.pc-prompt-card.disabled.dirty {
+    opacity: 1;
+    filter: none;
+}
+
 /* 卡片名字大字（对齐旧 .preset_profile_entry_name 字号） */
 .pc-prompt-card .pc-card-name {
     font-size: 14px;
