@@ -5,6 +5,7 @@ import {
     openai_settings,
     openai_setting_names,
     chat_completion_sources,
+    promptManager,
 } from '/scripts/openai.js';
 import { POPUP_TYPE, POPUP_RESULT, callGenericPopup, Popup } from '/scripts/popup.js';
 import { SlashCommand } from '/scripts/slash-commands/SlashCommand.js';
@@ -19,11 +20,15 @@ import { eventSource, event_types } from '/scripts/events.js';
 // ─────────────────────────────────────────
 let wasmInitialized = false;
 let parse_settings_fast = null;
+let build_prompt_manager_list_html = null;
+let build_preset_cards_html = null;
 
 try {
     const wasmModule = await import('./wasm/rust_core.js');
     await wasmModule.default(); // Initialize WASM
     parse_settings_fast = wasmModule.parse_settings_fast;
+    build_prompt_manager_list_html = wasmModule.build_prompt_manager_list_html;
+    build_preset_cards_html = wasmModule.build_preset_cards_html;
     wasmInitialized = true;
     console.log("preset-cards: Rust WASM core initialized successfully!");
 } catch (e) {
@@ -630,6 +635,13 @@ async function fastApplyPreset(presetIndex, presetName) {
 
     // ── Phase 5: Essential global events ──
     saveSettingsDebounced();
+    
+    // TEMPORARY MONKEY-PATCH: Skip expensive tryGenerate dry-run during preset change
+    const pm = promptManager;
+    if (pm) {
+        pm._skipNextTryGenerate = true;
+    }
+
     await eventSource.emit(event_types.OAI_PRESET_CHANGED_AFTER);
     await eventSource.emit(event_types.PRESET_CHANGED, { apiId: 'openai', name: presetName });
 }
@@ -819,7 +831,23 @@ async function openPresetCards() {
     let batchSelectedCards = new Set();
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
 
-    const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext(presets));
+    let html;
+    const ctx = getCardsTemplateContext(presets);
+    if (wasmInitialized && build_preset_cards_html) {
+        console.time('WASM_Cards_Render');
+        try {
+            html = build_preset_cards_html(
+                JSON.stringify(ctx.presets),
+                JSON.stringify(ctx.i18n),
+            );
+        } catch (e) {
+            console.warn('WASM card render failed, falling back to Handlebars', e);
+            html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', ctx);
+        }
+        console.timeEnd('WASM_Cards_Render');
+    } else {
+        html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', ctx);
+    }
     const dialog = $(html);
 
     if (isConciseMode) {
@@ -1679,6 +1707,98 @@ export function init() {
         },
         helpString: 'Opens the preset cards view for Chat Completion presets.',
     }));
+
+    // ─────────────────────────────────────────
+    // Layer 1: Monkey-patch PromptManager.renderPromptManagerListItems with WASM
+    // ─────────────────────────────────────────
+    if (wasmInitialized && build_prompt_manager_list_html) {
+        const patchPM = () => {
+            const pm = promptManager;
+            if (!pm) return;
+
+            const originalRenderListItems = pm.renderPromptManagerListItems.bind(pm);
+
+            pm.renderPromptManagerListItems = async function () {
+                if (!this.serviceSettings?.prompts || !this.listElement) {
+                    return originalRenderListItems();
+                }
+
+                try {
+                    console.time('WASM_PM_Render');
+
+                    const promptOrder = this.getPromptOrderForCharacter(this.activeCharacter);
+                    const counts = this.tokenHandler?.getCounts() || {};
+
+                    const tokenBudget = (this.serviceSettings.openai_max_context || 0) - (this.serviceSettings.openai_max_tokens || 0);
+
+                    const config = {
+                        prefix: this.configuration.prefix,
+                        overridden_prompts: Array.isArray(this.overriddenPrompts) ? this.overriddenPrompts : [],
+                        toggle_disabled: this.configuration.toggleDisabled || [],
+                        warning_token_threshold: this.configuration.warningTokenThreshold || 1500,
+                        danger_token_threshold: this.configuration.dangerTokenThreshold || 500,
+                        token_budget: tokenBudget,
+                        token_usage: this.tokenUsage || 0,
+                    };
+
+                    const htmlStr = build_prompt_manager_list_html(
+                        JSON.stringify(this.serviceSettings.prompts),
+                        JSON.stringify(promptOrder),
+                        JSON.stringify(counts),
+                        JSON.stringify(config),
+                    );
+
+                    this.listElement.innerHTML = '';
+                    this.listElement.insertAdjacentHTML('beforeend', htmlStr);
+
+                    // Re-bind event listeners (same as original)
+                    Array.from(this.listElement.getElementsByClassName('prompt-manager-detach-action')).forEach(el => {
+                        el.addEventListener('click', this.handleDetach);
+                    });
+                    Array.from(this.listElement.getElementsByClassName('prompt-manager-inspect-action')).forEach(el => {
+                        el.addEventListener('click', this.handleInspect);
+                    });
+                    Array.from(this.listElement.getElementsByClassName('prompt-manager-edit-action')).forEach(el => {
+                        el.addEventListener('click', this.handleEdit);
+                    });
+                    Array.from(this.listElement.querySelectorAll('.prompt-manager-toggle-action')).forEach(el => {
+                        el.addEventListener('click', this.handleToggle);
+                    });
+
+                    console.timeEnd('WASM_PM_Render');
+                } catch (e) {
+                    console.warn('WASM PM render failed, falling back to original', e);
+                    return originalRenderListItems();
+                }
+            };
+
+            const origRender = pm.render.bind(pm);
+            pm.render = async function(afterTryGenerate = false) {
+                if (this._skipNextTryGenerate) {
+                    this._skipNextTryGenerate = false;
+                    return origRender(true); // true means skip tryGenerate
+                }
+                return origRender(afterTryGenerate);
+            };
+
+            console.log('preset-cards: PromptManager patched with WASM accelerator and tryGenerate skip');
+        };
+
+        // PromptManager is initialized lazily, so we hook into its setup event
+        eventSource.on(event_types.OAI_PRESET_CHANGED_AFTER, () => {
+            if (promptManager && !promptManager._wasmPatched) {
+                patchPM();
+                promptManager._wasmPatched = true;
+            }
+        });
+
+        // Also try immediately in case PM is already ready
+        if (promptManager && !promptManager._wasmPatched) {
+            patchPM();
+            promptManager._wasmPatched = true;
+        }
+    }
+
 }
 
 export function refresh() {
