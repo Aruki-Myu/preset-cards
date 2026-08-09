@@ -15,23 +15,21 @@ import {
     readMeta,
     saveMeta,
     type Preset,
+    type PresetMeta,
     type PromptBaseProfile,
     type PromptDeltaChange,
     type PromptDeltaProfile,
     type PromptFields,
-    type PresetMeta,
 } from './meta.js';
 import {
     PROMPT_FIELD_WHITELIST,
     applyBaseProfile,
-    applyEntryState,
     applyProfileToPreset,
     buildPromptSnapshot,
     buildPromptToggleSnapshot,
     capturePromptFields,
     filterFields,
     findPromptInPreset,
-    mirrorFieldsToActivePreset,
     promptFieldsEqual,
     resolveParentStates,
     resolveProfilePrompts,
@@ -50,6 +48,10 @@ import {
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal, openPromptEditPopup } from './editModal.js';
+import { applyBufferedEdits, bufferKey, clearBufferedForName, editedIdentifiersForName, type PromptEditBuffer } from './presetBuffers.js';
+import { applyDirtyHighlights, syncRowModified } from './presetDirty.js';
+import { applyDefaultOriginalFields, ensureDefaultSnapshots, mergeBaseSnapshot, recordDefaultOriginalFields } from './presetSnapshot.js';
+import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
 
 export async function openPresetCards(): Promise<void> {
     // Backfill hidden default snapshots before rendering so reset always has a baseline
@@ -62,41 +64,10 @@ export async function openPresetCards(): Promise<void> {
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
 
     // 本次打开期间的值编辑记录：identifier → { 编辑前字段, 编辑后字段（累积目标值） }
-    const sessionEdits = new Map<string, { initial: PromptFields; edited: PromptFields }>();
+    const sessionEdits = new Map<string, PromptEditBuffer>();
 
     // 本次打开期间的开关切换缓冲：identifier → 本次会话目标 enabled，仅记录被切换过的条目
     const pendingToggles = new Map<string, boolean>();
-
-    // 缓冲键统一为 `${name.length}:${name}:${identifier}`：ST 的 prompt identifier（如 "0-user"）在几乎所有预设同名，
-    // 若只以 identifier 为键会跨预设污染（A 卡未保存的编辑被 B 卡保存时静默写入）。
-    // 长度前缀分隔：预设名含 ':'（如 "A:B"）时 name+':' 前缀会误命中其他卡的缓冲，故以 name.length 定界。
-    function bufferPrefix(name: string): string {
-        return `${name.length}:${name}:`;
-    }
-    function bufferKey(name: string, identifier: string): string {
-        return `${bufferPrefix(name)}${identifier}`;
-    }
-
-    // 只清当前 name 的缓冲条目：其他卡未保存的编辑保留。
-    function clearBufferedForName(name: string): void {
-        const prefix = bufferPrefix(name);
-        for (const key of [...sessionEdits.keys()]) {
-            if (key.startsWith(prefix)) sessionEdits.delete(key);
-        }
-        for (const key of [...pendingToggles.keys()]) {
-            if (key.startsWith(prefix)) pendingToggles.delete(key);
-        }
-    }
-
-    // 当前 name 的会话编辑过的 identifier 集合（供 buildPromptSnapshot includeFields 使用）。
-    function editedIdentifiersForName(name: string): Set<string> {
-        const prefix = bufferPrefix(name);
-        const ids = new Set<string>();
-        for (const key of sessionEdits.keys()) {
-            if (key.startsWith(prefix)) ids.add(key.slice(prefix.length));
-        }
-        return ids;
-    }
 
     const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
     const dialog = $(html);
@@ -129,144 +100,152 @@ export async function openPresetCards(): Promise<void> {
             .toggleClass('disabled', el.next('.preset_card_profile_entry').length === 0);
     }
 
-    // Backfill a hidden default snapshot for presets that don't have one yet.
-    // Called once when the dialog opens, so "reset" always has a baseline.
-    async function ensureDefaultSnapshots(): Promise<void> {
-        for (const [name, index] of Object.entries(openai_setting_names)) {
-            const preset = openai_settings[index] as Preset | undefined;
-            if (!preset) continue;
-            const meta = readMeta(preset);
-            if (meta.defaultSnapshot && meta.defaultSnapshot.length > 0) continue;
-            meta.defaultSnapshot = buildPromptToggleSnapshot(preset);
-            await saveMeta(name, index as number, meta);
-        }
-    }
-
-    // 重渲染后按当前缓冲恢复 dirty 高亮：保存/加载 profile/reset 已清缓冲，自然不恢复；
-    // 未清缓冲的路径（如「保存 base profile」后继续编辑）则按 bufferKey 逐条还原。
-    function applyDirtyHighlights(): void {
-        dialog.find('.preset_card_profile_entry').each(function () {
-            const entry = $(this);
-            const name = entry.closest('.preset_card').attr('data-preset-name') as string;
-            const identifier = String(entry.data('identifier'));
-            const key = bufferKey(name, identifier);
-            if (sessionEdits.has(key) || pendingToggles.has(key)) {
-                entry.addClass('dirty');
-            }
-        });
-    }
-
-    // 该行是否仍有未保存的净变化缓冲条目（toggle 目标或值编辑，net-zero 键已在 handler 中删除）。
-    // 另含非缓冲待保存改动：clear 直接删 profile 持久 fields，以行级 has-pending-clear 标记记录，
-    // 由本函数纳入判定，防止后续净零 toggle/edit 把保存按钮误藏、pending clear 静默丢失（#2）。
-    function rowHasBufferedChanges(row: JQuery<HTMLElement>): boolean {
-        if (row.data('has-pending-clear')) return true;
-        const name = row.closest('.preset_card').attr('data-preset-name') as string;
-        return row.find('.preset_card_profile_entry').toArray().some((el) => {
-            const key = bufferKey(name, String($(el).data('identifier')));
-            if (pendingToggles.has(key)) return true;
-            const session = sessionEdits.get(key);
-            return !!session && !promptFieldsEqual(session.edited, session.initial);
-        });
-    }
-
-    // toggle/edit/clear 后统一刷新行的 modified 标记与保存按钮显隐（无净变化缓冲则收起）。
-    // clear 直接删 profile 持久 fields 属非缓冲待保存改动：以行级 has-pending-clear 标记保留保存按钮，
-    // 由 rowHasBufferedChanges 纳入判定；保存/重渲染重建行后标记清除。
-    function syncRowModified(row: JQuery<HTMLElement>): void {
-        if (rowHasBufferedChanges(row)) {
-            row.addClass('modified');
-            row.find('.preset_card_profile_save_btn').removeClass('hidden');
-        } else {
-            row.removeClass('modified');
-            row.find('.preset_card_profile_save_btn').addClass('hidden');
-        }
-    }
-
     // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
-        applyDirtyHighlights();
+        applyDirtyHighlights(dialog, sessionEdits, pendingToggles);
         if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
         dialog.find('#preset_cards_search').trigger('input');
     }
 
-    // 把当前开关/值快照合并进主 profile（「保存→更新」与「覆盖」共用）：
-    // enabled 全量回写；fields 仅对本次会话编辑过且有净变化的条目写回，其余条目保留既有 fields，
-    // 避免重建快照时丢失此前已保存的值编辑。
-    function mergeBaseSnapshot(profile: PromptBaseProfile, snapshot: { identifier: string; enabled: boolean; fields?: PromptFields }[], name: string): void {
-        const previousPrompts = profile.prompts;
-        profile.prompts = snapshot.map((s) => {
-            const entry: { identifier: string; enabled: boolean; fields?: PromptFields } = {
-                identifier: s.identifier,
-                enabled: s.enabled,
-            };
-            const session = sessionEdits.get(bufferKey(name, s.identifier));
-            if (session && s.fields && !promptFieldsEqual(s.fields, session.initial)) {
-                entry.fields = s.fields;
-            } else if (!session) {
-                const prior = previousPrompts.find((p) => p.identifier === s.identifier)?.fields;
-                if (prior) entry.fields = prior;
+    // 保存/覆盖/派生前统一应用本会话的开关/值编辑缓冲并采集快照：缺失条目提示跳过。
+    // 返回反映本次编辑后的开关+值字段快照（buildPromptSnapshot 的 includeFields 取当前 name 的编辑集合）。
+    function applyBufferedAndSnapshot(
+        preset: Preset,
+        name: string,
+        sessionEdits: Map<string, PromptEditBuffer>,
+        pendingToggles: Map<string, boolean>,
+    ): { identifier: string; enabled: boolean; fields?: PromptFields }[] {
+        const missing = applyBufferedEdits(preset, name, sessionEdits, pendingToggles);
+        if (missing.length > 0) {
+            toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
+        }
+        return buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name, sessionEdits) });
+    }
+
+    // 「保存→更新」与「覆盖」共用的 base/delta 提交：按类型合并缓冲后的快照 → 持久化 → 成功提示。
+    // missingParent 为 delta 父链缺失时的分歧路径：
+    //   'full-changes'（保存→更新）：全量写成差异（含值字段）继续提交；
+    //   'abort'（覆盖）：toast 提示并返回 false，调用方中止后续。
+    // 仅处理 base/delta；v1 由调用方先行分支。成功时返回 true。
+    async function commitBufferedEditsToProfile(
+        profile: PromptBaseProfile | PromptDeltaProfile,
+        snapshot: { identifier: string; enabled: boolean; fields?: PromptFields }[],
+        meta: PresetMeta,
+        name: string,
+        idx: number,
+        sessionEdits: Map<string, PromptEditBuffer>,
+        missingParent: 'full-changes' | 'abort',
+    ): Promise<boolean> {
+        if (isPromptBaseProfile(profile)) {
+            // enabled 全量合并；fields 仅对本次编辑的条目（与编辑初值无净变化时清除），
+            // 其余条目保留既有 fields（见 mergeBaseSnapshot）
+            mergeBaseSnapshot(profile, snapshot, name, sessionEdits);
+            recordDefaultOriginalFields(meta, name, sessionEdits);
+        } else {
+            // 基线用父链解析状态（不含本 delta 自身 changes），否则未编辑的已存差异与基线相等而被 diff 掉
+            const parentEntries = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            if (parentEntries.length > 0) {
+                profile.changes = snapshotToChanges(snapshot, parentEntries, profile.changes);
+            } else if (missingParent === 'full-changes') {
+                // 父链缺失：全量写成差异（含值字段）
+                profile.changes = snapshot.map((s) => {
+                    const change: PromptDeltaChange = { identifier: s.identifier, enabled: s.enabled };
+                    if (s.fields) change.fields = s.fields;
+                    return change;
+                });
+            } else {
+                toastr.warning(L('Base profile not found, cannot update derived configuration'));
+                return false;
             }
-            return entry;
+            recordDefaultOriginalFields(meta, name, sessionEdits);
+        }
+
+        await saveMeta(name, idx, meta);
+        toastr.success(L('Configuration updated'));
+        return true;
+    }
+
+    // 活动预设被删后重选第一个剩余预设并触发原生下拉 change（无剩余时保持 null）。
+    function reselectFirstPreset(): void {
+        if (Object.keys(openai_setting_names).length) {
+            const newActiveName = Object.keys(openai_setting_names)[0];
+            oai_settings.preset_settings_openai = newActiveName;
+            const newValue = openai_setting_names[newActiveName];
+            $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
+            $('#settings_preset_openai').trigger('change');
+        }
+    }
+
+    // 刷新卡片选中态：清空后按当前活动预设重新高亮对应卡片。
+    function refreshActiveCardSelection(): void {
+        dialog.find('.preset_card').removeClass('selected');
+        const newActive = oai_settings.preset_settings_openai;
+        if (newActive) {
+            dialog.find('.preset_card').filter(function () {
+                return $(this).attr('data-preset-name') === newActive;
+            }).addClass('selected');
+        }
+    }
+
+    // 删除单个 preset 的公共例程：移除下拉 option → 清 openai_setting_names → 活动预设置空/重选 →
+    // 服务端删除 → 成功路径删卡 + presets filter + onBeforeEmit + emit PRESET_DELETED。
+    // 返回服务端是否确认删除成功；value 缺失（防御：批删循环已提前跳过）返回 false 不提示。
+    // activeHandling: 'immediate'（单删）活动预设被删时当场 reselectFirstPreset；
+    //                 'deferred'（批删）只置空，重选由调用方在循环后统一执行。
+    // onDeleted: 服务端确认成功后、UI 删卡前（单删：成功 toast）；
+    // onBeforeEmit: 删卡与 presets filter 之后、emit 之前（单删：search 过滤 + 选中态刷新）。
+    async function deletePresetByName(
+        nameToDelete: string,
+        opts: {
+            activeHandling: 'immediate' | 'deferred';
+            emitLog: string;
+            onDeleted?: () => void;
+            onBeforeEmit?: () => void;
+        },
+    ): Promise<boolean> {
+        const value = openai_setting_names[nameToDelete];
+        if (value === undefined) return false;
+
+        $(`#settings_preset_openai option[value="${value}"]`).remove();
+        delete openai_setting_names[nameToDelete];
+
+        if (oai_settings.preset_settings_openai === nameToDelete) {
+            oai_settings.preset_settings_openai = null;
+            if (opts.activeHandling === 'immediate') {
+                reselectFirstPreset();
+            }
+        }
+
+        const response = await fetch('/api/presets/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
         });
-    }
 
-    // 把本次会话的开关/值编辑缓冲统一应用到 preset 真实值（prompts + prompt_order）。
-    // 先应用开关（applyEntryState 内部同步 prompt_order），再写值字段并镜像到活动预设；
-    // 缺失条目跳过并收集返回，由调用方决定是否提示。
-    function applyBufferedEdits(preset: Preset, name: string): string[] {
-        const missing: string[] = [];
-        const seen = new Set<string>();
-        const prefix = bufferPrefix(name);
-        for (const [key, enabled] of pendingToggles) {
-            if (!key.startsWith(prefix)) continue;
-            const identifier = key.slice(prefix.length);
-            if (!applyEntryState(preset, identifier, enabled)) {
-                seen.add(identifier);
-                missing.push(identifier);
-            }
-        }
-        for (const [key, session] of sessionEdits) {
-            if (!key.startsWith(prefix)) continue;
-            const identifier = key.slice(prefix.length);
-            const prompt = findPromptInPreset(preset, identifier);
-            if (!prompt) {
-                if (!seen.has(identifier)) {
-                    seen.add(identifier);
-                    missing.push(identifier);
-                }
-                continue;
-            }
-            Object.assign(prompt, filterFields(session.edited));
-            mirrorFieldsToActivePreset(name, identifier, session.edited);
-        }
-        return missing;
-    }
+        if (!response.ok) return false;
 
-    // 把本次编辑过的条目的原始值字段惰性写入 defaultSnapshot（已存在则不覆盖）。
-    // 只在 base 保存路径调用：defaultSnapshot 可能尚不存在（首次打开才生成），此时跳过。
-    function recordDefaultOriginalFields(meta: PresetMeta, name: string): void {
-        if (!Array.isArray(meta.defaultSnapshot)) return;
-        const prefix = bufferPrefix(name);
-        for (const [key, session] of sessionEdits) {
-            if (!key.startsWith(prefix)) continue;
-            const identifier = key.slice(prefix.length);
-            const entry = meta.defaultSnapshot.find((d) => d.identifier === identifier);
-            if (!entry || entry.originalFields) continue;
-            entry.originalFields = { ...filterFields(session.initial) };
-        }
-    }
+        opts.onDeleted?.();
 
-    // 把 defaultSnapshot 记录的原始值字段应用回 preset（reset 到默认时还原首次编辑前的值）。
-    function applyDefaultOriginalFields(preset: Preset, meta: PresetMeta): void {
-        if (!Array.isArray(meta.defaultSnapshot)) return;
-        for (const d of meta.defaultSnapshot) {
-            if (!d.originalFields) continue;
-            const prompt = findPromptInPreset(preset, d.identifier);
-            if (prompt) Object.assign(prompt, filterFields(d.originalFields));
+        // Safely remove the card from the UI immediately
+        dialog.find('.preset_card').filter(function () {
+            return $(this).attr('data-preset-name') === nameToDelete;
+        }).remove();
+
+        // Re-evaluate counts and search
+        presets = presets.filter(p => p.name !== nameToDelete);
+
+        opts.onBeforeEmit?.();
+
+        // Emit the event LAST to avoid being interrupted by other listeners
+        try {
+            await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
+        } catch (err) {
+            console.error(opts.emitLog, err);
         }
+
+        return true;
     }
 
     // ---- Search ----
@@ -501,56 +480,18 @@ export async function openPresetCards(): Promise<void> {
         const confirm = await callGenericPopup(t`Delete the preset? This action is irreversible and your current settings will be overwritten.`, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
-        const value = openai_setting_names[nameToDelete];
-        $(`#settings_preset_openai option[value="${value}"]`).remove();
-        delete openai_setting_names[nameToDelete];
-
-        if (oai_settings.preset_settings_openai === nameToDelete) {
-            oai_settings.preset_settings_openai = null;
-            if (Object.keys(openai_setting_names).length) {
-                const newActiveName = Object.keys(openai_setting_names)[0];
-                oai_settings.preset_settings_openai = newActiveName;
-                const newValue = openai_setting_names[newActiveName];
-                $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
-                $('#settings_preset_openai').trigger('change');
-            }
-        }
-
-        const response = await fetch('/api/presets/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+        const deleted = await deletePresetByName(nameToDelete, {
+            activeHandling: 'immediate',
+            emitLog: 'Error emitting PRESET_DELETED',
+            onDeleted: () => toastr.success(t`Preset deleted`),
+            onBeforeEmit: () => {
+                dialog.find('#preset_cards_search').trigger('input');
+                refreshActiveCardSelection();
+            },
         });
 
-        if (!response.ok) {
+        if (!deleted) {
             toastr.warning(t`Preset was not deleted from server`);
-        } else {
-            toastr.success(t`Preset deleted`);
-
-            // Safely remove the card from the UI immediately
-            dialog.find('.preset_card').filter(function () {
-                return $(this).attr('data-preset-name') === nameToDelete;
-            }).remove();
-
-            // Re-evaluate counts and search
-            presets = presets.filter(p => p.name !== nameToDelete);
-            dialog.find('#preset_cards_search').trigger('input');
-
-            // If the active preset changed (because the old one was deleted), update the selected styling
-            dialog.find('.preset_card').removeClass('selected');
-            const newActive = oai_settings.preset_settings_openai;
-            if (newActive) {
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === newActive;
-                }).addClass('selected');
-            }
-
-            // Emit the event LAST to avoid being interrupted by other listeners
-            try {
-                await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
-            } catch (err) {
-                console.error('Error emitting PRESET_DELETED', err);
-            }
         }
     });
 
@@ -591,53 +532,19 @@ export async function openPresetCards(): Promise<void> {
         let deletedCount = 0;
 
         for (const nameToDelete of batchSelectedCards) {
-            const value = openai_setting_names[nameToDelete];
-            if (value === undefined) continue;
-
-            $(`#settings_preset_openai option[value="${value}"]`).remove();
-            delete openai_setting_names[nameToDelete];
-
-            if (oai_settings.preset_settings_openai === nameToDelete) {
-                oai_settings.preset_settings_openai = null;
-                activeDeleted = true;
-            }
-
-            const response = await fetch('/api/presets/delete', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+            if (openai_setting_names[nameToDelete] === undefined) continue;
+            const wasActive = oai_settings.preset_settings_openai === nameToDelete;
+            const deleted = await deletePresetByName(nameToDelete, {
+                activeHandling: 'deferred',
+                emitLog: 'Error emitting PRESET_DELETED for batch mode',
             });
-
-            if (response.ok) {
-                deletedCount++;
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === nameToDelete;
-                }).remove();
-                presets = presets.filter(p => p.name !== nameToDelete);
-                try {
-                    await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
-                } catch (err) {
-                    console.error('Error emitting PRESET_DELETED for batch mode', err);
-                }
-            }
+            if (deleted) deletedCount++;
+            if (wasActive) activeDeleted = true;
         }
 
         if (activeDeleted) {
-            if (Object.keys(openai_setting_names).length) {
-                const newActiveName = Object.keys(openai_setting_names)[0];
-                oai_settings.preset_settings_openai = newActiveName;
-                const newValue = openai_setting_names[newActiveName];
-                $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
-                $('#settings_preset_openai').trigger('change');
-            }
-
-            dialog.find('.preset_card').removeClass('selected');
-            const newActive = oai_settings.preset_settings_openai;
-            if (newActive) {
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === newActive;
-                }).addClass('selected');
-            }
+            reselectFirstPreset();
+            refreshActiveCardSelection();
         }
 
         if (deletedCount > 0) {
@@ -672,7 +579,7 @@ export async function openPresetCards(): Promise<void> {
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
 
         // 新 base 快照须包含本会话缓冲的开关/值编辑：先统一应用缓冲再采集快照
-        const missing = applyBufferedEdits(preset, name);
+        const missing = applyBufferedEdits(preset, name, sessionEdits, pendingToggles);
         if (missing.length > 0) {
             toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
         }
@@ -742,7 +649,7 @@ export async function openPresetCards(): Promise<void> {
         }
 
         // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲并收起保存按钮
-        clearBufferedForName(name);
+        clearBufferedForName(name, sessionEdits, pendingToggles);
         card.find('.preset_card_profile_row').removeData('has-pending-clear');
         card.find('.preset_card_profile_row').removeClass('modified');
         card.find('.preset_card_profile_entry').removeClass('dirty');
@@ -798,7 +705,7 @@ export async function openPresetCards(): Promise<void> {
         }
 
         // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
-        syncRowModified(row);
+        syncRowModified(row, sessionEdits, pendingToggles);
     });
 
     // ---- Profiles: Edit entry value fields (opens the prompt edit popup) ----
@@ -844,7 +751,7 @@ export async function openPresetCards(): Promise<void> {
         }
 
         // 统一刷新行的 modified 标记与保存按钮（本行已无净变化缓冲则收起）
-        syncRowModified(row);
+        syncRowModified(row, sessionEdits, pendingToggles);
 
         // 仅 UI：本地刷新条目名（值已缓冲，保存时才写入 preset 与运行态）
         const nameEl = entry.find('.preset_card_profile_entry_name');
@@ -913,7 +820,7 @@ export async function openPresetCards(): Promise<void> {
         // 记录行内存在非缓冲待保存 clear（防止后续净零 toggle/edit 的 syncRowModified 误藏保存按钮），
         // 再统一刷新行状态；保存/重渲染重建行时标记自然清除。
         row.data('has-pending-clear', true);
-        syncRowModified(row);
+        syncRowModified(row, sessionEdits, pendingToggles);
 
         // 本地移除值变更标记与本按钮；下次保存（整卡重渲染）按最终 profile 数据呈现
         entry.removeClass('has_fields');
@@ -984,41 +891,15 @@ export async function openPresetCards(): Promise<void> {
         if (!choice) return;
 
         // 保存时统一应用缓冲（先开关后值字段），快照随后才能反映本次编辑
-        const missing = applyBufferedEdits(preset, name);
-        if (missing.length > 0) {
-            toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
-        }
-
-        // Collect current switch states + value fields for the edited entries
-        const snapshot = buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name) });
+        const snapshot = applyBufferedAndSnapshot(preset, name, sessionEdits, pendingToggles);
 
         if (choice === 'update') {
-            if (isPromptBaseProfile(profile)) {
-                // enabled 全量合并；fields 仅对本次编辑的条目（与编辑初值无净变化时清除），
-                // 其余条目保留既有 fields（见 mergeBaseSnapshot）
-                mergeBaseSnapshot(profile, snapshot, name);
-                recordDefaultOriginalFields(meta, name);
-            } else if (isPromptDeltaProfile(profile)) {
-                // 基线用父链解析状态（不含本 delta 自身 changes），否则未编辑的已存差异与基线相等而被 diff 掉
-                const parentEntries = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-                if (parentEntries.length > 0) {
-                    profile.changes = snapshotToChanges(snapshot, parentEntries, profile.changes);
-                } else {
-                    // 父链缺失：全量写成差异（含值字段）
-                    profile.changes = snapshot.map((s) => {
-                        const change: PromptDeltaChange = { identifier: s.identifier, enabled: s.enabled };
-                        if (s.fields) change.fields = s.fields;
-                        return change;
-                    });
-                }
-                recordDefaultOriginalFields(meta, name);
-            } else {
+            if (!isPromptBaseProfile(profile) && !isPromptDeltaProfile(profile)) {
                 // v1: not editable via switches
                 toastr.warning(L('This profile type cannot be edited with switches'));
                 return;
             }
-            await saveMeta(name, idx, meta);
-            toastr.success(L('Configuration updated'));
+            await commitBufferedEditsToProfile(profile, snapshot, meta, name, idx, sessionEdits, 'full-changes');
         } else {
             // create a new delta subprofile derived from the edited profile (base or delta)
             if (!isPromptBaseProfile(profile) && !isPromptDeltaProfile(profile)) {
@@ -1031,16 +912,9 @@ export async function openPresetCards(): Promise<void> {
             const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
             const parentEntries = resolveProfilePrompts(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
             const changes = snapshotToChanges(snapshot, parentEntries, isPromptDeltaProfile(profile) ? profile.changes : []);
-            profiles.push({
-                formatVersion: 2,
-                kind: 'prompt_delta',
-                id: newProfileId(),
-                name: deltaName,
-                baseId: profile.id,
-                changes,
-            });
+            profiles.push(buildDerivedProfile(profile, deltaName, changes));
             meta.profiles = profiles;
-            recordDefaultOriginalFields(meta, name);
+            recordDefaultOriginalFields(meta, name, sessionEdits);
             await saveMeta(name, idx, meta);
             toastr.success(L('Derived profile created'));
         }
@@ -1050,7 +924,7 @@ export async function openPresetCards(): Promise<void> {
         refreshActivePresetUI(name);
 
         // 本批编辑已消费，清空当前 name 的记录（其他卡的缓冲保留）
-        clearBufferedForName(name);
+        clearBufferedForName(name, sessionEdits, pendingToggles);
 
         // Refresh UI
         await refreshGrid();
@@ -1082,46 +956,27 @@ export async function openPresetCards(): Promise<void> {
         if (!profile) return;
 
         // 覆盖同样先统一应用缓冲，快照才能反映本次编辑
-        const missing = applyBufferedEdits(preset, name);
-        if (missing.length > 0) {
-            toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
-        }
+        const snapshot = applyBufferedAndSnapshot(preset, name, sessionEdits, pendingToggles);
 
-        if (isPromptBaseProfile(profile)) {
-            // 覆盖仅重同步 enabled 开关；fields 保留既有值（本次会话未编辑的条目不丢），
-            // 本次会话编辑过的条目按与编辑初值是否有净变化决定保留/清除（与保存流程一致，见 mergeBaseSnapshot）
-            const snapshot = buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name) });
-            mergeBaseSnapshot(profile, snapshot, name);
-            recordDefaultOriginalFields(meta, name);
-
-            await saveMeta(name, idx, meta);
-            toastr.success(L('Configuration updated'));
-            refreshActivePresetUI(name);
-        } else if (isPromptDeltaProfile(profile)) {
-            // 派生 profile：基于解析后的 parent 状态重新生成差异（snapshotToChanges 保留既有 fields）
-            const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
-            if (parentStates.length === 0) {
-                toastr.warning(L('Base profile not found, cannot update derived configuration'));
-                return;
-            }
-            profile.changes = snapshotToChanges(buildPromptSnapshot(preset, { includeFields: editedIdentifiersForName(name) }), parentStates, profile.changes);
-            recordDefaultOriginalFields(meta, name);
-
-            await saveMeta(name, idx, meta);
-            toastr.success(L('Configuration updated'));
+        if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
+            // base：enabled 全量合并 + 本次会话编辑条目的 fields（见 mergeBaseSnapshot）；
+            // delta：基于解析后的 parent 状态重新生成差异（snapshotToChanges 保留既有 fields）；
+            // 父链缺失（仅 delta）时 abort：toast 提示并中止，不落盘。
+            const committed = await commitBufferedEditsToProfile(profile, snapshot, meta, name, idx, sessionEdits, 'abort');
+            if (!committed) return;
             refreshActivePresetUI(name);
         } else {
             // v1 全量快照
-            const snapshot = structuredClone(preset);
-            delete snapshot.extensions; // Don't nest extensions
-            profile.settings = snapshot;
+            const v1Snapshot = structuredClone(preset);
+            delete v1Snapshot.extensions; // Don't nest extensions
+            profile.settings = v1Snapshot;
 
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration updated'));
         }
 
         // 覆盖已消费本批编辑：清空当前 name 的缓冲（其他卡的缓冲保留）并重渲染网格
-        clearBufferedForName(name);
+        clearBufferedForName(name, sessionEdits, pendingToggles);
         await refreshGrid();
     });
 
@@ -1148,14 +1003,7 @@ export async function openPresetCards(): Promise<void> {
         if (!deltaName) return;
 
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-        profiles.push({
-            formatVersion: 2,
-            kind: 'prompt_delta',
-            id: newProfileId(),
-            name: deltaName,
-            baseId: parent.id,
-            changes: [], // 初始为空数组：与上级 profile 完全相同，后续通过「覆盖」更新差异
-        });
+        profiles.push(buildDerivedProfile(parent, deltaName));
 
         meta.profiles = profiles;
         await saveMeta(name, idx, meta);
@@ -1213,7 +1061,7 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration reset'));
             refreshActivePresetUI(name);
-            clearBufferedForName(name);
+            clearBufferedForName(name, sessionEdits, pendingToggles);
         } else if (isPromptBaseProfile(profile)) {
             // 主 profile：回退到隐藏默认基准
             if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
@@ -1234,7 +1082,7 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration reset'));
             refreshActivePresetUI(name);
-            clearBufferedForName(name);
+            clearBufferedForName(name, sessionEdits, pendingToggles);
         } else {
             toastr.warning(L('This profile type cannot be reset'));
             return;
@@ -1260,27 +1108,7 @@ export async function openPresetCards(): Promise<void> {
         const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        // 递归收集所有派生后代（含多层 delta 链）：id → 其后代 id 列表
-        // visited 防环：损坏/导入成环数据（delta baseId 指回自身或互相引用）时不致死循环。
-        function collectDescendantIds(rootId: string): string[] {
-            const result: string[] = [];
-            const visited = new Set<string>();
-            const queue = [String(rootId)];
-            while (queue.length > 0) {
-                const current = queue.shift() as string;
-                if (visited.has(current)) continue;
-                visited.add(current);
-                for (const p of meta.profiles) {
-                    if (isPromptDeltaProfile(p) && String(p.baseId) === current) {
-                        result.push(String(p.id));
-                        queue.push(String(p.id));
-                    }
-                }
-            }
-            return result;
-        }
-
-        const descendantIds = collectDescendantIds(profileId);
+        const descendantIds = collectDescendantProfileIds(meta, profileId);
 
         let confirmText = L('Delete this configuration?');
         if (descendantIds.length > 0) {
