@@ -907,11 +907,12 @@
 .pc-drag-handle-icon {
     display: inline-block !important;
     opacity: 0.3;
-    transition: opacity 0.2s, transform 0.2s;
+    transition: opacity 0.2s, transform 0.2s, color 0.2s;
 }
 
 .pc-prompt-card:hover .pc-drag-handle-icon {
     opacity: 0.8;
+    color: var(--SmartThemeQuoteColor);
 }
 
 .pc-drag-handle:hover .pc-drag-handle-icon {
