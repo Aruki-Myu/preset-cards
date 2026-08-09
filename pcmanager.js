@@ -22,7 +22,7 @@ class PCManagerCore {
 
     cloneState() {
         if (!promptManager || !promptManager.serviceSettings) return false;
-        
+
         if (this.diffs && this.diffs.length > 0) {
             toastr.info('您还有未提交的更改 (You have uncommitted changes)');
             return true;
@@ -56,13 +56,17 @@ class PCManagerCore {
         return macros;
     }
 
-    extractSetVars(text) {
+    extractVars(text) {
         if (!text) return [];
-        const regex = /\{\{setvar::(.*?)::(.*?)\}\}/g;
+        const regex = /\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g;
         const vars = [];
         let match;
         while ((match = regex.exec(text)) !== null) {
-            vars.push({ name: match[1].trim(), value: match[2].trim() });
+            if (match[1] !== undefined) {
+                vars.push({ type: 'setvar', name: match[1].trim(), value: match[2].trim() });
+            } else if (match[3] !== undefined) {
+                vars.push({ type: 'getvar', name: match[3].trim() });
+            }
         }
         return vars;
     }
@@ -80,7 +84,7 @@ class PCManagerCore {
             const currO = currOrderMap.get(id);
             const origP = origMap.get(id);
             const currP = currMap.get(id);
-            
+
             if (!origO || !origP) {
                 this.diffs.push({ type: 'added', id, desc: `Added prompt: ${currP?.name || id}` });
                 continue;
@@ -95,7 +99,7 @@ class PCManagerCore {
                 this.diffs.push({ type: 'modify', id, desc: `Modified parameters of: ${currP.name}` });
             }
         }
-        
+
         for (const origOrder of this.originalState.promptOrder) {
             if (!currOrderMap.has(origOrder.identifier)) {
                 const origP = origMap.get(origOrder.identifier);
@@ -139,9 +143,11 @@ class PCManagerCore {
 
         this.dialog.find('#pc-btn-commit').on('click', () => this.commitState());
         this.dialog.find('#pc-btn-close').on('click', () => {
-            const popupInstance = Popup.util?.popups?.slice(-1)[0];
+            const popupInstance = Popup.util?.popups?.find(p => p.dlg && p.dlg.contains(this.dialog[0]));
             if (popupInstance) {
                 popupInstance.complete(POPUP_RESULT.CANCELLED);
+            } else {
+                this.dialog.closest('.popup').find('.popup-controls .cancel').trigger('click');
             }
         });
         this.dialog.find('#pc-btn-view-staged').on('click', () => {
@@ -153,7 +159,7 @@ class PCManagerCore {
             transparent: true,
             okButton: false,
             allowVerticalScrolling: true,
-            onClosing: () => { this.isOpen = false; }
+            onClose: () => { this.isOpen = false; }
         });
     }
 
@@ -162,30 +168,61 @@ class PCManagerCore {
         const searchTerm = this.dialog.find('#pc-search-input').val()?.toLowerCase() || '';
         const isSearching = searchTerm.length > 0;
         listEl.empty();
-        
+
+        const globalVars = {};
+        let itemIndex = 1;
+
         for (const orderItem of this.transactionalState.promptOrder) {
             const prompt = this.transactionalState.prompts.find(p => p.identifier === orderItem.identifier);
-            if (!prompt) continue;
-            
+            if (!prompt) {
+                itemIndex++;
+                continue;
+            }
+
+            const currentIndex = itemIndex++;
+
             if (isSearching) {
                 const nameMatch = prompt.name?.toLowerCase().includes(searchTerm);
                 const contentMatch = (prompt.content || prompt.prompt || '').toLowerCase().includes(searchTerm);
                 if (!nameMatch && !contentMatch) continue;
             }
-            
+
             const macros = this.extractMacros(prompt.content || prompt.prompt || '');
-            const macroHtml = macros.map(m => `<span class="pc-macro-badge"><i class="fa-solid fa-comment-dots"></i> ${escapeHtml(m)}</span>`).join('');
-            
-            const setVars = this.extractSetVars(prompt.content || prompt.prompt || '');
-            let setVarHtml = '';
-            if (setVars.length > 0) {
-                setVarHtml = setVars.map(v => `<span class="pc-setvar-badge" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`).join('');
+            const macroHtml = macros.map(m => {
+                const displayStr = m.length > 20 ? m.substring(0, 20) + '...' : m;
+                return `<span class="pc-macro-badge" title="${escapeHtml(m)}"><i class="fa-solid fa-comment-dots"></i> ${escapeHtml(displayStr)}</span>`;
+            }).join('');
+
+            const vars = this.extractVars(prompt.content || prompt.prompt || '');
+            let varHtmlElements = [];
+
+            for (const v of vars) {
+                if (v.type === 'setvar') {
+                    if (orderItem.enabled) {
+                        globalVars[v.name] = v.value;
+                    }
+                    varHtmlElements.push(
+                        `<span class="pc-var-badge pc-setvar-badge" data-type="setvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
+                    );
+                } else if (v.type === 'getvar') {
+                    const currentValue = globalVars[v.name];
+                    const isUnset = currentValue === undefined;
+                    const displayValue = isUnset ? 'Unset' : currentValue;
+                    const bgClass = isUnset ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)';
+                    const textClass = isUnset ? '#f87171' : '#60a5fa';
+
+                    varHtmlElements.push(
+                        `<span class="pc-var-badge pc-getvar-badge" data-type="getvar" data-varname="${escapeHtml(v.name)}" title="${escapeHtml(displayValue)}" style="cursor: pointer; font-size: 0.75rem; background: ${bgClass}; color: ${textClass}; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
+                    );
+                }
             }
-            
+            const setVarHtml = varHtmlElements.join('');
+
             const card = document.createElement('div');
             card.className = `pc-prompt-card ${orderItem.enabled ? '' : 'disabled'}`;
             card.dataset.id = prompt.identifier;
             card.innerHTML = `
+                <div class="pc-card-index" style="font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; font-size: 1.2rem; font-weight: 800; color: var(--SmartThemeBodyColor); opacity: 0.15; min-width: 32px; text-align: center; margin-right: 4px; pointer-events: none; user-select: none;">${String(currentIndex).padStart(2, '0')}</div>
                 <div class="pc-card-header">
                     <span class="pc-card-title">
                         <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 100%;">
@@ -212,6 +249,10 @@ class PCManagerCore {
                 animation: 150,
                 ghostClass: 'pc-sortable-ghost',
                 dragClass: 'pc-sortable-drag',
+                start: () => listEl.addClass('is-dragging'),
+                stop: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
+                onStart: () => listEl.addClass('is-dragging'),
+                onEnd: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
                 update: (event, ui) => {
                     const newOrderIds = listEl.sortable('toArray', { attribute: 'data-id' });
                     this.transactionalState.promptOrder = newOrderIds.map(id => {
@@ -234,11 +275,12 @@ class PCManagerCore {
             }
         });
 
-        listEl.find('.pc-setvar-badge').on('click', (e) => {
+        listEl.find('.pc-var-badge').on('click', (e) => {
             e.stopPropagation();
             const badge = $(e.currentTarget);
             const card = badge.closest('.pc-prompt-card');
             const id = card.data('id');
+            const type = badge.data('type');
             const varName = badge.data('varname');
             const varValue = badge.data('varvalue');
 
@@ -249,9 +291,14 @@ class PCManagerCore {
             if (textarea) {
                 const text = textarea.value;
                 const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                const regex = new RegExp(`(\\{\\{setvar::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
+                let regex;
+                if (type === 'setvar') {
+                    regex = new RegExp(`(\\{\\{setvar::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
+                } else {
+                    regex = new RegExp(`(\\{\\{getvar::\\s*)(${escapeRegExp(String(varName))})(\\s*\\}\\})`);
+                }
+
                 const match = regex.exec(text);
-                
                 if (match) {
                     const valueStartIndex = match.index + match[1].length;
                     const valueEndIndex = valueStartIndex + match[2].length;
@@ -262,6 +309,7 @@ class PCManagerCore {
         });
 
         listEl.find('.pc-prompt-card').on('click', (e) => {
+            if (listEl.hasClass('is-dragging')) return;
             this.editTargetId = $(e.currentTarget).data('id');
             this.updateRightPane();
         });
@@ -322,7 +370,7 @@ class PCManagerCore {
     undoChange(id, type) {
         const origP = this.originalState.prompts.find(p => p.identifier === id);
         const origO = this.originalState.promptOrder.find(o => o.identifier === id);
-        
+
         if (type === 'modify' || type === 'added' || type === 'delete') {
             const tIdx = this.transactionalState.prompts.findIndex(p => p.identifier === id);
             if (origP) {
@@ -332,7 +380,7 @@ class PCManagerCore {
                 this.transactionalState.prompts.splice(tIdx, 1); // Was added, now revert (delete)
             }
         }
-        
+
         if (type === 'reorder' || type === 'toggle' || type === 'added' || type === 'delete') {
             const currList = this.transactionalState.promptOrder;
             if (origO) {
@@ -354,7 +402,7 @@ class PCManagerCore {
     renderEditForm() {
         const editEl = this.dialog.find('#pc-edit-area');
         const prompt = this.transactionalState.prompts.find(p => p.identifier === this.editTargetId);
-        
+
         if (!prompt) {
             this.editTargetId = null;
             this.updateRightPane();
@@ -368,10 +416,6 @@ class PCManagerCore {
         editEl.html(`
             <div class="pc-editor-header">
                 <h3>Editing: ${escapeHtml(prompt.name)}</h3>
-                <div class="pc-editor-actions">
-                    <button class="pc-btn-icon pc-btn-icon-primary" id="pc-btn-save-edit" title="Save to Staging"><i class="fa-solid fa-save"></i></button>
-                    <button class="pc-btn-icon pc-btn-close-edit" title="Close Editor"><i class="fa-solid fa-times"></i></button>
-                </div>
             </div>
             ${(isCore || isHistory) ? '<div style="color: #ef4444; font-size: 0.8rem; margin-bottom: 12px; padding: 8px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;"><i class="fa-solid fa-triangle-exclamation"></i> 此条目为系统关键设定，部分内容已被锁定以防破坏内部注入逻辑。</div>' : ''}
             <div class="pc-form-group">
@@ -402,9 +446,13 @@ class PCManagerCore {
                 <label>Prompt Text (Supports Macros)</label>
                 <textarea class="pc-form-control" id="pc-edit-content" rows="10" ${(isCore || isHistory) ? 'disabled' : ''}>${escapeHtml(prompt.content || prompt.prompt || '')}</textarea>
             </div>
+            <div class="pc-editor-footer" style="display: flex; gap: 8px; justify-content: flex-start; margin-top: 16px;">
+                <button class="pc-btn-icon pc-btn-icon-primary" id="pc-btn-save-edit" title="Save to Staging"><i class="fa-solid fa-save"></i> 保存</button>
+                <button class="pc-btn-icon pc-btn-close-edit" title="Close Editor"><i class="fa-solid fa-times"></i> 关闭</button>
+            </div>
         `);
 
-        editEl.find('#pc-edit-inj-pos').on('change', function() {
+        editEl.find('#pc-edit-inj-pos').on('change', function () {
             if ($(this).val() == '2') {
                 editEl.find('#pc-edit-inj-depth-grp').show();
             } else {
@@ -419,7 +467,7 @@ class PCManagerCore {
 
         editEl.find('#pc-btn-save-edit').on('click', () => {
             prompt.name = editEl.find('#pc-edit-name').val();
-            
+
             if (!isHistory) {
                 prompt.role = editEl.find('#pc-edit-role').val();
                 prompt.injection_position = Number(editEl.find('#pc-edit-inj-pos').val());
@@ -429,13 +477,13 @@ class PCManagerCore {
                     delete prompt.injection_depth;
                 }
             }
-            
+
             if (!isCore && !isHistory) {
                 const text = editEl.find('#pc-edit-content').val();
                 if (prompt.prompt !== undefined) prompt.prompt = text;
                 else prompt.content = text;
             }
-            
+
             this.editTargetId = null;
             this.updateListUI();
             this.updateRightPane();
@@ -444,9 +492,9 @@ class PCManagerCore {
 
     async commitState() {
         if (this.diffs.length === 0) return;
-        
+
         promptManager.serviceSettings.prompts = structuredClone(this.transactionalState.prompts);
-        
+
         const characterList = promptManager.serviceSettings.prompt_order.find(list => String(list.character_id) === String(this.activeCharacter?.id));
         if (characterList) {
             characterList.order = structuredClone(this.transactionalState.promptOrder);
@@ -457,7 +505,7 @@ class PCManagerCore {
         saveSettingsDebounced();
         promptManager.render();
         toastr.success('PCManager: Changes committed.');
-        
+
         this.diffs = [];
         this.cloneState();
         this.updateListUI();
