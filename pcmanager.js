@@ -64,15 +64,19 @@ class PCManagerCore {
 
     extractVars(text) {
         if (!text) return [];
-        const regex = /\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g;
         const vars = [];
         let match;
-        while ((match = regex.exec(text)) !== null) {
-            if (match[1] !== undefined) {
-                vars.push({ type: 'setvar', name: match[1].trim(), value: match[2].trim() });
-            } else if (match[3] !== undefined) {
-                vars.push({ type: 'getvar', name: match[3].trim() });
-            }
+        const setRegex = /\{\{setvar::(.*?)::([\s\S]*?)\}\}/g;
+        while ((match = setRegex.exec(text)) !== null) {
+            vars.push({ type: 'setvar', name: match[1].trim(), value: match[2].trim() });
+        }
+        const addRegex = /\{\{addvar::(.*?)::([\s\S]*?)\}\}/g;
+        while ((match = addRegex.exec(text)) !== null) {
+            vars.push({ type: 'addvar', name: match[1].trim(), value: match[2].trim() });
+        }
+        const getRegex = /\{\{getvar::([\s\S]*?)\}\}/g;
+        while ((match = getRegex.exec(text)) !== null) {
+            vars.push({ type: 'getvar', name: match[1].trim() });
         }
         return vars;
     }
@@ -240,6 +244,25 @@ class PCManagerCore {
                     varHtmlElements.push(
                         `<span class="pc-var-badge pc-setvar-badge" data-type="setvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
                     );
+                } else if (v.type === 'addvar') {
+                    if (orderItem.enabled) {
+                        const varName = v.name;
+                        const val = v.value;
+                        if (globalVars[varName] !== undefined) {
+                            const currNum = Number(globalVars[varName]);
+                            const addNum = Number(val);
+                            if (!isNaN(currNum) && !isNaN(addNum) && val !== '' && globalVars[varName] !== '') {
+                                globalVars[varName] = String(currNum + addNum);
+                            } else {
+                                globalVars[varName] += val;
+                            }
+                        } else {
+                            globalVars[varName] = val;
+                        }
+                    }
+                    varHtmlElements.push(
+                        `<span class="pc-var-badge pc-addvar-badge" data-type="addvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-plus-square"></i> ${escapeHtml(v.name)}</span>`
+                    );
                 } else if (v.type === 'getvar') {
                     const currentValue = globalVars[v.name];
                     const isUnset = currentValue === undefined;
@@ -363,8 +386,8 @@ class PCManagerCore {
             if (textarea) {
                 const text = textarea.value;
                 let regex;
-                if (type === 'setvar') {
-                    regex = new RegExp(`(\\{\\{setvar::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
+                if (type === 'setvar' || type === 'addvar') {
+                    regex = new RegExp(`(\\{\\{${type}::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
                 } else {
                     regex = new RegExp(`(\\{\\{getvar::\\s*)(${escapeRegExp(String(varName))})(\\s*\\}\\})`);
                 }
@@ -475,12 +498,27 @@ class PCManagerCore {
                 let text = prompt.content || prompt.prompt || '';
                 if (this.macroMode) {
                     let escapedText = escapeHtml(text);
-                    escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, getvarName) => {
+                    escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{addvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, addvarName, addvarVal, getvarName) => {
                         if (commentGroup !== undefined) {
                             return ''; // Remove comment
                         } else if (setvarName !== undefined) {
                             localVars[setvarName.trim()] = setvarVal.trim();
                             return ''; // Remove setvar
+                        } else if (addvarName !== undefined) {
+                            const varName = addvarName.trim();
+                            const val = addvarVal.trim();
+                            if (localVars[varName] !== undefined) {
+                                const currNum = Number(localVars[varName]);
+                                const addNum = Number(val);
+                                if (!isNaN(currNum) && !isNaN(addNum) && val !== '' && localVars[varName] !== '') {
+                                    localVars[varName] = String(currNum + addNum);
+                                } else {
+                                    localVars[varName] += val;
+                                }
+                            } else {
+                                localVars[varName] = val;
+                            }
+                            return ''; // Remove addvar
                         } else if (getvarName !== undefined) {
                             const varName = getvarName.trim();
                             const val = localVars[varName] !== undefined ? localVars[varName] : '';
@@ -498,6 +536,10 @@ class PCManagerCore {
                     escapedText = escapedText.replace(/\{\{setvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
                         return `<span style="background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{setvar::${name}::${val}}}</span>`;
                     });
+                    // Highlight addvar (orange)
+                    escapedText = escapedText.replace(/\{\{addvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
+                        return `<span style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{addvar::${name}::${val}}}</span>`;
+                    });
                     // Highlight getvar (blue)
                     escapedText = escapedText.replace(/\{\{getvar::([\s\S]*?)\}\}/g, (match, name) => {
                         return `<span style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{getvar::${name}}}</span>`;
@@ -510,9 +552,9 @@ class PCManagerCore {
                     escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}/g, (match, content) => {
                         return `<span style="background: rgba(156, 163, 175, 0.2); color: #9ca3af; padding: 2px 4px; border-radius: 4px; font-style: italic;">{{//${content}}}</span>`;
                     });
-                    // Highlight all other ST macros (amber/orange)
-                    escapedText = escapedText.replace(/\{\{(?!setvar|getvar|trim|\/\/)(.*?)\}\}/g, (match, macroContent) => {
-                        return `<span style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{${macroContent}}}</span>`;
+                    // Highlight all other ST macros (teal/cyan)
+                    escapedText = escapedText.replace(/\{\{(?!setvar|addvar|getvar|trim|\/\/)(.*?)\}\}/g, (match, macroContent) => {
+                        return `<span style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{${macroContent}}}</span>`;
                     });
                     html += escapedText;
                 }
