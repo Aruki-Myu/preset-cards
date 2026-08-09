@@ -1809,7 +1809,7 @@ export function init() {
                     }
 
                     let toggleSpanHtml = '<span class="fa-solid"></span>';
-                    if (this.isPromptToggleAllowed(prompt)) {
+                    if (this.isPromptToggleAllowed(prompt) && !prompt.system_prompt && !prompt.marker) {
                         toggleSpanHtml = `<span class="prompt-manager-toggle-action ${listEntry.enabled ? 'fa-solid fa-toggle-on' : 'fa-solid fa-toggle-off'}"></span>`;
                     }
 

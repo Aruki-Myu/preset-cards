@@ -276,6 +276,7 @@ class PCManagerCore {
                 }
             }
             const setVarHtml = varHtmlElements.join('');
+            const isSystemManaged = !!prompt.system_prompt || !!prompt.marker;
 
             const card = document.createElement('div');
             card.className = `pc-prompt-card ${orderItem.enabled ? '' : 'disabled'}`;
@@ -297,7 +298,7 @@ class PCManagerCore {
                 <div class="pc-card-macros">${macroHtml}</div>
                 <div class="pc-card-controls" style="display: flex; align-items: center; gap: 8px;">
                     <span class="pc-role-badge role-${prompt.role || 'system'}">${escapeHtml(prompt.role || 'system')}</span>
-                    <button class="pc-btn-toggle" data-id="${prompt.identifier}" title="Toggle Prompt">${orderItem.enabled ? '<i class="fa-solid fa-toggle-on"></i> ' : '<i class="fa-solid fa-toggle-off"></i> '}</button>
+                    ${isSystemManaged ? '' : `<button class="pc-btn-toggle" data-id="${prompt.identifier}" title="Toggle Prompt">${orderItem.enabled ? '<i class="fa-solid fa-toggle-on"></i> ' : '<i class="fa-solid fa-toggle-off"></i> '}</button>`}
                     <button class="pc-btn-remove" data-id="${prompt.identifier}" title="从当前列表中移除" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-trash-can"></i></button>
                 </div>
             `;
