@@ -883,9 +883,13 @@
     align-items: center;
     gap: 12px;
     transition: all 0.2s ease;
-    cursor: pointer;
+    cursor: grab;
     min-width: 0;
     touch-action: pan-y;
+}
+
+.pc-prompt-card:active {
+    cursor: grabbing;
 }
 
 .pc-drag-handle {

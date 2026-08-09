@@ -272,17 +272,23 @@ class PCManagerCore {
         if (listEl.sortable('instance')) listEl.sortable('destroy');
         if (!isSearching) {
             listEl.sortable({
-                handle: '.pc-drag-handle',
                 delay: getSortableDelay(),
-                delayOnTouchOnly: true,
-                animation: 250,
-                easing: "cubic-bezier(0.2, 0.8, 0.2, 1)",
-                ghostClass: 'pc-sortable-ghost',
-                dragClass: 'pc-sortable-drag',
-                start: () => listEl.addClass('is-dragging'),
+                handle: typeof isMobile === 'function' && isMobile() ? '.pc-drag-handle' : null,
+                items: '.pc-prompt-card',
+                cancel: 'input, textarea, button, select, option, .pc-btn-toggle, .pc-btn-remove, .pc-var-badge, .pc-card-id',
+                tolerance: 'pointer',
+                revert: 150,
+                start: (event, ui) => {
+                    listEl.addClass('is-dragging');
+                    ui.placeholder.height(ui.helper.outerHeight());
+                    ui.placeholder.css('visibility', 'visible');
+                    ui.placeholder.css('background', 'rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1)');
+                    ui.placeholder.css('border', '2px dashed var(--SmartThemeQuoteColor)');
+                    ui.placeholder.css('border-radius', '6px');
+                    ui.helper.css('box-shadow', '0 16px 32px rgba(0,0,0,0.4), 0 0 0 2px var(--SmartThemeQuoteColor)');
+                    ui.helper.css('cursor', 'grabbing');
+                },
                 stop: () => setTimeout(() => listEl.removeClass('is-dragging'), 50),
-                onStart: () => { listEl.addClass('is-dragging'); document.body.style.cursor = 'grabbing'; },
-                onEnd: () => { setTimeout(() => listEl.removeClass('is-dragging'), 50); document.body.style.cursor = ''; },
                 update: (event, ui) => {
                     const newOrderIds = listEl.sortable('toArray', { attribute: 'data-id' });
                     this.transactionalState.promptOrder = newOrderIds.map(id => {
