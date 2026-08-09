@@ -14,6 +14,7 @@ import { t } from '/scripts/i18n.js';
 import { download, cancelDebounce } from '/scripts/utils.js';
 import { settingsToUpdate } from '/scripts/openai.js';
 import { eventSource, event_types } from '/scripts/events.js';
+import { openPCManager } from './pcmanager.js';
 
 // ─────────────────────────────────────────
 // Rust WASM Fast Preset Loading
@@ -1709,9 +1710,14 @@ export function init() {
         <div id="preset_cards_button" class="list-group-item flex-container flexGap5">
             <div class="fa-solid fa-grip extensionsMenuExtensionButton"></div>` +
         t`Preset Cards` +
+        '</div>' +
+        `<div id="pc_manager_button" class="list-group-item flex-container flexGap5">
+            <div class="fa-solid fa-list-check extensionsMenuExtensionButton"></div>` +
+        'PCManager' +
         '</div>';
     $('#token_counter_wand_container').append(buttonHtml);
     $('#preset_cards_button').on('click', openPresetCards);
+    $('#pc_manager_button').on('click', openPCManager);
 
     SlashCommandParser.addCommandObject(SlashCommand.fromProps({
         name: 'presetcards',
@@ -1720,6 +1726,15 @@ export function init() {
             return '';
         },
         helpString: 'Opens the preset cards view for Chat Completion presets.',
+    }));
+
+    SlashCommandParser.addCommandObject(SlashCommand.fromProps({
+        name: 'pcmanager',
+        callback: async () => {
+            await openPCManager();
+            return '';
+        },
+        helpString: 'Opens the PCManager (Advanced Prompt Manager).',
     }));
 
     // ─────────────────────────────────────────
