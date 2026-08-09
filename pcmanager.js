@@ -510,6 +510,10 @@ class PCManagerCore {
                     escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}/g, (match, content) => {
                         return `<span style="background: rgba(156, 163, 175, 0.2); color: #9ca3af; padding: 2px 4px; border-radius: 4px; font-style: italic;">{{//${content}}}</span>`;
                     });
+                    // Highlight all other ST macros (amber/orange)
+                    escapedText = escapedText.replace(/\{\{(?!setvar|getvar|trim|\/\/)(.*?)\}\}/g, (match, macroContent) => {
+                        return `<span style="background: rgba(245, 158, 11, 0.15); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{${macroContent}}}</span>`;
+                    });
                     html += escapedText;
                 }
             }
