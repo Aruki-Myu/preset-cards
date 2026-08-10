@@ -357,20 +357,15 @@ class PCManagerCore {
             const idx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
             if (idx > -1) {
                 const prompt = this.transactionalState.prompts.find(p => p.identifier === id);
+                // Only remove from promptOrder so it moves back to the import modal pool
                 this.transactionalState.promptOrder.splice(idx, 1);
-
-                const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples', 'chatHistory', 'main'];
-                const pIdx = this.transactionalState.prompts.findIndex(p => p.identifier === id);
-                if (pIdx > -1 && !CORE_IDS.includes(id)) {
-                    this.transactionalState.prompts.splice(pIdx, 1);
-                }
 
                 if (this.editTargetId === id) {
                     this.editTargetId = null;
                 }
                 this.updateListUI();
                 this.updateRightPane();
-                toastr.info(`已从列表中移除 "${prompt?.name || id}"`);
+                toastr.info(`已将 "${prompt?.name || id}" 从列表移除（可在“引入条目”中找回）`);
             }
         });
 
@@ -908,12 +903,33 @@ class PCManagerCore {
             const pIdx = this.transactionalState.prompts.findIndex(p => p.identifier === id);
             if (pIdx > -1) {
                 const promptName = this.transactionalState.prompts[pIdx].name;
+                
+                // 1. Remove from transactionalState
                 this.transactionalState.prompts.splice(pIdx, 1);
-
                 const oIdx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
                 if (oIdx > -1) {
                     this.transactionalState.promptOrder.splice(oIdx, 1);
                 }
+
+                // 2. Remove from originalState as well
+                const origPIdx = this.originalState.prompts.findIndex(p => p.identifier === id);
+                if (origPIdx > -1) this.originalState.prompts.splice(origPIdx, 1);
+                const origOIdx = this.originalState.promptOrder.findIndex(o => o.identifier === id);
+                if (origOIdx > -1) this.originalState.promptOrder.splice(origOIdx, 1);
+
+                // 3. Immediately save to ST serviceSettings and active preset file on disk
+                promptManager.serviceSettings.prompts = structuredClone(this.transactionalState.prompts);
+                for (const list of promptManager.serviceSettings.prompt_order) {
+                    if (Array.isArray(list.order)) {
+                        list.order = list.order.filter(o => o.identifier !== id);
+                    }
+                }
+                
+                saveSettingsDebounced();
+                if ($('#update_oai_preset').length) {
+                    $('#update_oai_preset').trigger('click');
+                }
+                promptManager.render();
 
                 if (this.editTargetId === id) {
                     this.editTargetId = null;
@@ -921,7 +937,7 @@ class PCManagerCore {
 
                 this.updateListUI();
                 this.updateRightPane();
-                toastr.success(`已彻底删除条目 "${promptName}"`);
+                toastr.success(`已彻底删除条目 "${promptName}" 并自动保存预设`);
                 removeItemAndCheckEmpty(e.currentTarget);
             }
         });
