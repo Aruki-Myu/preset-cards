@@ -70,12 +70,22 @@ declare module '@sillytavern/scripts/popup' {
     ): Promise<string | null>;
     export class Popup {
         static show: Record<string, (...args: any[]) => Promise<any>>;
+        constructor(
+            content: JQuery<HTMLElement> | string,
+            type: string,
+            inputValue?: string,
+            popupOptions?: Record<string, any>,
+        );
+        show(): Promise<string | null>;
+        complete(result: string | number): Promise<void>;
+        completeCancelled(): Promise<void>;
     }
 }
 
 declare module '@sillytavern/scripts/openai' {
     /** 每一项: [selector, setting_name, is_checkbox, is_connection] */
     export const settingsToUpdate: Record<string, [string, string, boolean, boolean]>;
+    export function getChatCompletionPreset(settings?: Record<string, unknown>): Record<string, unknown>;
     export const chat_completion_sources: Record<string, string>;
     export let openai_setting_names: Record<string, number>;
     export let openai_settings: Record<string, unknown>[];
@@ -84,4 +94,15 @@ declare module '@sillytavern/scripts/openai' {
         extensions?: Record<string, unknown>;
         [key: string]: unknown;
     };
+    export const promptManager: {
+        render(afterTryGenerate?: boolean): void;
+        saveServiceSettings(): Promise<void>;
+        configuration: {
+            promptOrder: {
+                strategy: 'global' | 'character';
+                dummyId?: number;
+            };
+        };
+        activeCharacter?: { id: number } | null;
+    } | null;
 }

@@ -2,8 +2,15 @@ import { t } from '@sillytavern/scripts/i18n';
 import { SlashCommand } from '@sillytavern/scripts/slash-commands/SlashCommand';
 import { SlashCommandParser } from '@sillytavern/scripts/slash-commands/SlashCommandParser';
 import { openPresetCards } from './presetCards.js';
+import { initActiveProfile } from './activeProfile.js';
+
+export function refresh(): void {
+    location.reload();
+}
 
 export function init(): void {
+    initActiveProfile();
+
     const buttonHtml = `
         <div id="preset_cards_button" class="list-group-item flex-container flexGap5">
             <div class="fa-solid fa-grip extensionsMenuExtensionButton"></div>` +

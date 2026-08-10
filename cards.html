@@ -47,15 +47,15 @@
                 </div>
                 <span class="preset_card_active_badge" data-i18n="Active">Active</span>
                 <div class="preset_card_actions">
-                    <button class="preset_card_export_btn menu_button" title="Export" data-preset-name="{{this.name}}"
+                    <button class="preset_card_export_btn menu_button" title="{{../i18n.exportConfig}}" data-preset-name="{{this.name}}"
                         data-preset-index="{{this.index}}">
                         <i class="fa-solid fa-file-export"></i>
                     </button>
-                    <button class="preset_card_edit_btn menu_button" title="Edit" data-preset-name="{{this.name}}"
+                    <button class="preset_card_edit_btn menu_button" title="{{../i18n.edit}}" data-preset-name="{{this.name}}"
                         data-preset-index="{{this.index}}">
                         <i class="fa-solid fa-pen-to-square"></i>
                     </button>
-                    <button class="preset_card_delete_btn menu_button" title="Delete" data-preset-name="{{this.name}}"
+                    <button class="preset_card_delete_btn menu_button" title="{{../i18n.delete}}" data-preset-name="{{this.name}}"
                         data-preset-index="{{this.index}}">
                         <i class="fa-solid fa-trash-can"></i>
                     </button>
@@ -83,18 +83,26 @@
                             <button class="preset_card_import_profile_btn menu_button" title="{{../i18n.importConfig}}">
                                 <i class="fa-solid fa-file-import"></i>
                             </button>
-                            <button class="preset_card_add_profile_btn menu_button" title="{{../i18n.addConfig}}">
+                            <button class="preset_card_export_all_btn menu_button" title="{{../i18n.exportAll}}">
+                                <i class="fa-solid fa-file-export"></i>
+                            </button>
+                            <button class="preset_card_add_profile_btn menu_button" title="{{../i18n.addBaseConfig}}">
                                 <i class="fa-solid fa-plus"></i>
                             </button>
                         </div>
                     </div>
                     <div class="preset_card_profiles_list">
                         {{#each this.profiles}}
-                        <div class="preset_card_profile_row" data-profile-id="{{this.id}}">
-                            <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
+                        <div class="preset_card_profile_row {{#if this.isActiveProfile}}active{{/if}}" data-profile-id="{{this.id}}">
+                            <div class="preset_card_profile_name_wrap">
+                                {{#if this.isBase}}<span class="preset_card_profile_badge badge_base">base</span>{{/if}}
+                                {{#if this.isDelta}}{{#if this.parentName}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{this.parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{../../i18n.derived}}</span>{{/if}}{{/if}}
+                                <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
+                            </div>
                             <div class="preset_card_profile_actions">
+                                <i class="fa-solid fa-code-fork preset_card_profile_derive" title="{{../../i18n.derive}}"></i>
+                                <i class="fa-solid fa-rotate-left preset_card_profile_reset" title="{{../../i18n.resetProfile}}"></i>
                                 <i class="fa-solid fa-file-export preset_card_profile_export" title="{{../../i18n.exportConfig}}"></i>
-                                <i class="fa-solid fa-floppy-disk preset_card_profile_update" title="{{../../i18n.overwriteConfig}}"></i>
                                 <i class="fa-solid fa-pencil preset_card_profile_edit" title="{{../../i18n.rename}}"></i>
                                 <i class="fa-solid fa-trash-can preset_card_profile_delete" title="{{../../i18n.delete}}"></i>
                             </div>

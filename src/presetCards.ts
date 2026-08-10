@@ -1,16 +1,45 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
-import { oai_settings, openai_settings, openai_setting_names, settingsToUpdate } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, promptManager, settingsToUpdate, getChatCompletionPreset } from '@sillytavern/scripts/openai';
 import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
 import { eventSource, event_types } from '@sillytavern/scripts/events';
 import { AVAILABLE_MODELS, EXTENSION_NAME, LOGO_BASE } from './constants.js';
 import { L } from './i18n.js';
-import { readMeta, saveMeta, type Preset } from './meta.js';
+import {
+    isPromptBaseProfile,
+    isPromptDeltaProfile,
+    getProfile,
+    newProfileId,
+    readMeta,
+    saveMeta,
+    type Preset,
+    type PromptBaseProfile,
+    type PromptDeltaProfile,
+} from './meta.js';
+import {
+    applyBaseProfile,
+    applyProfileToPreset,
+    buildBaseSnapshotDiff,
+    resolveParentStates,
+} from './promptToggle.js';
+import {
+    buildProfileExportData,
+    buildTreeExportData,
+    chooseFromOptions,
+    chooseProfileExportAction,
+    mergeImportedProfiles,
+    warnV1ExcludedFromTreeExport,
+} from './importExport.js';
 import { buildPresetList, getCardsTemplateContext } from './presetList.js';
 import { applyCachedBackgrounds, clearImageCache } from './cache.js';
 import { openEditModal } from './editModal.js';
+import { applyBufferedEdits, clearBufferedForName, type PromptEditBuffer } from './presetBuffers.js';
+import { applyDefaultOriginalFields, lockDefaultSnapshot } from './presetSnapshot.js';
+import { buildDerivedProfile, collectDescendantProfileIds } from './profileActions.js';
+import { openProfileEditorPopup } from './profileEditor.js';
+import { getActiveProfile, setActiveProfile } from './activeProfile.js';
 
 export async function openPresetCards(): Promise<void> {
     let presets = buildPresetList();
@@ -18,6 +47,12 @@ export async function openPresetCards(): Promise<void> {
     let isBatchMode = false;
     const batchSelectedCards = new Set<string>();
     let isConciseMode = localStorage.getItem('preset_cards_concise') === 'true';
+
+    // 本次打开期间的值编辑记录：identifier → { 编辑前字段, 编辑后字段（累积目标值） }
+    const sessionEdits = new Map<string, PromptEditBuffer>();
+
+    // 本次打开期间的开关切换缓冲：identifier → 本次会话目标 enabled，仅记录被切换过的条目
+    const pendingToggles = new Map<string, boolean>();
 
     const html = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
     const dialog = $(html);
@@ -30,7 +65,132 @@ export async function openPresetCards(): Promise<void> {
     // ---- Helpers ----
     function updateCount(visible: number, total: number): void {
         const el = dialog.find('#preset_cards_count');
-        el.text(visible === total ? `${total} presets` : `${visible} / ${total}`);
+        el.text(visible === total ? `${total} ${L('presets')}` : `${visible} / ${total}`);
+    }
+
+    // If the preset is currently active, reload it natively and refresh the Prompt Manager list.
+    // promptManager may be absent in some ST builds, hence the optional chain.
+    function refreshActivePresetUI(presetName: string): void {
+        if (oai_settings.preset_settings_openai === presetName) {
+            $('#settings_preset_openai').trigger('change');
+            promptManager?.render?.(false);
+        }
+    }
+
+    // 激活 preset 并刷新运行态（恰好一次原生 change）：
+    // - 未激活：切到它并触发 change 重载（同卡片点击），刷新卡片高亮；
+    // - 已激活：仅触发 change 刷新（等价旧 refreshActivePresetUI）。
+    // 须在 saveMeta 落盘之后调用（ST onSettingsPresetChange 从内存 openai_settings 重载，不会冲掉已保存改动）。
+    function activatePreset(name: string, idx: number): void {
+        if (oai_settings.preset_settings_openai !== name) {
+            oai_settings.preset_settings_openai = name;
+            $('#settings_preset_openai').val(idx).trigger('change');
+            refreshActiveCardSelection();
+        } else {
+            refreshActivePresetUI(name);
+        }
+    }
+
+    // 整卡列表重渲染并触发搜索过滤；重渲染后默认重新应用背景图（applyCachedBackgrounds 幂等，
+    // 仅对缺失 background-image 的卡片生效，无需逐调用点传 applyBackgrounds）。
+    async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
+        const searchEl = dialog.find('#preset_cards_search');
+        const query = String(searchEl.val() ?? '');
+        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
+        dialog.html($(newHtml).html());
+        if (opts?.applyBackgrounds !== false) applyCachedBackgrounds(dialog);
+        if (query) dialog.find('#preset_cards_search').val(query);
+        if (isConciseMode) dialog.find('#preset_cards_concise_btn').addClass('active');
+        dialog.find('#preset_cards_search').trigger('input');
+    }
+
+    // 活动预设被删后重选第一个剩余预设并触发原生下拉 change（无剩余时保持 null）。
+    function reselectFirstPreset(): void {
+        if (Object.keys(openai_setting_names).length) {
+            const newActiveName = Object.keys(openai_setting_names)[0];
+            oai_settings.preset_settings_openai = newActiveName;
+            const newValue = openai_setting_names[newActiveName];
+            $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
+            $('#settings_preset_openai').trigger('change');
+        }
+    }
+
+    // 刷新卡片选中态：清空后按当前活动预设重新高亮对应卡片。
+    function refreshActiveCardSelection(): void {
+        dialog.find('.preset_card').removeClass('selected');
+        const newActive = oai_settings.preset_settings_openai;
+        if (newActive) {
+            dialog.find('.preset_card').filter(function () {
+                return $(this).attr('data-preset-name') === newActive;
+            }).addClass('selected');
+        }
+    }
+
+    // 删除单个 preset 的公共例程：移除下拉 option → 清 openai_setting_names → 活动预设置空/重选 →
+    // 服务端删除 → 成功路径删卡 + presets filter + onBeforeEmit + emit PRESET_DELETED。
+    // 返回服务端是否确认删除成功；value 缺失（防御：批删循环已提前跳过）返回 false 不提示。
+    // activeHandling: 'immediate'（单删）活动预设被删时当场 reselectFirstPreset；
+    //                 'deferred'（批删）只置空，重选由调用方在循环后统一执行。
+    // onDeleted: 服务端确认成功后、UI 删卡前（单删：成功 toast）；
+    // onBeforeEmit: 删卡与 presets filter 之后、emit 之前（单删：search 过滤 + 选中态刷新）。
+    async function deletePresetByName(
+        nameToDelete: string,
+        opts: {
+            activeHandling: 'immediate' | 'deferred';
+            emitLog: string;
+            onDeleted?: () => void;
+            onBeforeEmit?: () => void;
+        },
+    ): Promise<boolean> {
+        const value = openai_setting_names[nameToDelete];
+        if (value === undefined) return false;
+
+        $(`#settings_preset_openai option[value="${value}"]`).remove();
+        delete openai_setting_names[nameToDelete];
+
+        if (oai_settings.preset_settings_openai === nameToDelete) {
+            oai_settings.preset_settings_openai = null;
+            if (opts.activeHandling === 'immediate') {
+                reselectFirstPreset();
+            }
+        }
+
+        const response = await fetch('/api/presets/delete', {
+            method: 'POST',
+            headers: getRequestHeaders(),
+            body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+        });
+
+        if (!response.ok) return false;
+
+        const active = getActiveProfile();
+        if (active && active.presetName === nameToDelete) {
+            setActiveProfile(undefined);
+        }
+
+        // V2：删除预设后清理其未提交缓冲（孤儿缓冲仅会在同一会话重建同名预设时被错误套用）
+        clearBufferedForName(nameToDelete, sessionEdits, pendingToggles);
+
+        opts.onDeleted?.();
+
+        // Safely remove the card from the UI immediately
+        dialog.find('.preset_card').filter(function () {
+            return $(this).attr('data-preset-name') === nameToDelete;
+        }).remove();
+
+        // Re-evaluate counts and search
+        presets = presets.filter(p => p.name !== nameToDelete);
+
+        opts.onBeforeEmit?.();
+
+        // Emit the event LAST to avoid being interrupted by other listeners
+        try {
+            await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
+        } catch (err) {
+            console.error(opts.emitLog, err);
+        }
+
+        return true;
     }
 
     // ---- Search ----
@@ -72,23 +232,29 @@ export async function openPresetCards(): Promise<void> {
         const list = $('<div class="preset_card_profiles_list"></div>');
 
         meta.profiles.forEach(p => {
-            const row = $(`<div class="preset_card_profile_row" data-profile-id="${p.id}" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;">
-                <div class="preset_card_profile_name" style="font-size:14px;">${p.name}</div>
-            </div>`);
+            const row = $('<div class="preset_card_profile_row" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;"></div>')
+                .attr('data-profile-id', String(p.id));
+            row.append($('<div class="preset_card_profile_name" style="font-size:14px;"></div>').text(p.name));
 
             row.on('click', async function () {
-                const ext = preset.extensions;
-                Object.assign(preset, p.settings);
-                preset.extensions = ext;
+                const profileId = row.data('profile-id');
+                const profile = getProfile(meta, profileId);
+                if (!profile) return;
+
+                applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
 
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration loaded'));
+                setActiveProfile({ presetName: name, profileId: String(profileId) });
 
-                if (oai_settings.preset_settings_openai === name) {
-                    $('#settings_preset_openai').trigger('change');
-                }
+                activatePreset(name, idx);
+
+                // 加载已整体覆盖 preset：清该预设的会话缓冲（与非简洁路径一致）
+                clearBufferedForName(name, sessionEdits, pendingToggles);
 
                 $(this).closest('.popup').find('.popup-controls .menu_button').click(); // close modal
+
+                await refreshGrid();
             });
 
             list.append(row);
@@ -139,6 +305,9 @@ export async function openPresetCards(): Promise<void> {
         // Ignore if clicking action buttons
         if ($(e.target as Element).closest('.preset_card_actions').length) return;
 
+        // Ignore if clicking inside the profiles section (entries, names, blank row space)
+        if ($(e.target as Element).closest('.preset_card_profiles_section').length) return;
+
         const name = $(this).attr('data-preset-name') as string;
 
         if (isBatchMode) {
@@ -169,10 +338,7 @@ export async function openPresetCards(): Promise<void> {
         await clearImageCache();
         toastr.success(L('Cache cleared successfully'));
 
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        applyCachedBackgrounds(dialog);
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid({ applyBackgrounds: true });
     });
 
     // ---- Edit button ----
@@ -223,44 +389,54 @@ export async function openPresetCards(): Promise<void> {
             } else {
                 chipsEl.remove();
             }
+
+            // Update background image
+            const bgImage = meta.bgImage || '';
+            card.toggleClass('has_bg', !!bgImage);
+            let bgEl = card.find('.preset_card_bg_image');
+            if (bgImage) {
+                if (bgEl.length === 0) {
+                    card.append('<div class="preset_card_bg_image"></div>');
+                    bgEl = card.find('.preset_card_bg_image');
+                }
+                bgEl.css('background-image', 'none').attr('data-bg-url', bgImage);
+                applyCachedBackgrounds(card);
+            } else {
+                bgEl.remove();
+            }
         });
     });
 
-    // ---- Export button ----
+    // 导出完整预设 JSON（剔除敏感字段与连接数据），卡片头部导出按钮专用。
+    // 与配置区头部的「导出全部配置」(`${name}-tree.json`，整棵分支树) 区分。
+    function exportPresetFile(name: string, idx: number): void {
+        const preset = structuredClone(openai_settings[idx] as Preset);
+
+        const sensitiveFields = [
+            'reverse_proxy', 'proxy_password', 'custom_url',
+            'custom_include_body', 'custom_exclude_body', 'custom_include_headers',
+            'vertexai_region', 'vertexai_express_project_id',
+            'azure_base_url', 'azure_deployment_name',
+            'workers_ai_account_id',
+        ];
+        sensitiveFields.forEach(field => delete preset[field]);
+
+        if (settingsToUpdate) {
+            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
+                if (isConnection) { delete preset[settingName]; }
+            }
+        }
+
+        download(JSON.stringify(preset, null, 4), `${name}.json`, 'application/json');
+    }
+
+    // ---- Export button (导出完整预设，剔除敏感字段) ----
     dialog.on('click', '.preset_card_export_btn', function (e) {
         e.stopPropagation();
         const name = $(this).attr('data-preset-name') as string;
         const idx = $(this).data('preset-index') as number;
-        const preset = structuredClone(openai_settings[idx] as Preset);
 
-        // Remove sensitive fields
-        const sensitiveFields = [
-            'reverse_proxy',
-            'proxy_password',
-            'custom_url',
-            'custom_include_body',
-            'custom_exclude_body',
-            'custom_include_headers',
-            'vertexai_region',
-            'vertexai_express_project_id',
-            'azure_base_url',
-            'azure_deployment_name',
-            'workers_ai_account_id',
-        ];
-
-        sensitiveFields.forEach(field => delete preset[field]);
-
-        // Remove connection data
-        if (settingsToUpdate) {
-            for (const [, [, settingName, , isConnection]] of Object.entries(settingsToUpdate)) {
-                if (isConnection) {
-                    delete preset[settingName];
-                }
-            }
-        }
-
-        const data = JSON.stringify(preset, null, 4);
-        download(data, `${name}.json`, 'application/json');
+        exportPresetFile(name, idx);
     });
 
     // ---- Delete button ----
@@ -271,56 +447,18 @@ export async function openPresetCards(): Promise<void> {
         const confirm = await callGenericPopup(t`Delete the preset? This action is irreversible and your current settings will be overwritten.`, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
-        const value = openai_setting_names[nameToDelete];
-        $(`#settings_preset_openai option[value="${value}"]`).remove();
-        delete openai_setting_names[nameToDelete];
-
-        if (oai_settings.preset_settings_openai === nameToDelete) {
-            oai_settings.preset_settings_openai = null;
-            if (Object.keys(openai_setting_names).length) {
-                const newActiveName = Object.keys(openai_setting_names)[0];
-                oai_settings.preset_settings_openai = newActiveName;
-                const newValue = openai_setting_names[newActiveName];
-                $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
-                $('#settings_preset_openai').trigger('change');
-            }
-        }
-
-        const response = await fetch('/api/presets/delete', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+        const deleted = await deletePresetByName(nameToDelete, {
+            activeHandling: 'immediate',
+            emitLog: 'Error emitting PRESET_DELETED',
+            onDeleted: () => toastr.success(t`Preset deleted`),
+            onBeforeEmit: () => {
+                dialog.find('#preset_cards_search').trigger('input');
+                refreshActiveCardSelection();
+            },
         });
 
-        if (!response.ok) {
+        if (!deleted) {
             toastr.warning(t`Preset was not deleted from server`);
-        } else {
-            toastr.success(t`Preset deleted`);
-
-            // Safely remove the card from the UI immediately
-            dialog.find('.preset_card').filter(function () {
-                return $(this).attr('data-preset-name') === nameToDelete;
-            }).remove();
-
-            // Re-evaluate counts and search
-            presets = presets.filter(p => p.name !== nameToDelete);
-            dialog.find('#preset_cards_search').trigger('input');
-
-            // If the active preset changed (because the old one was deleted), update the selected styling
-            dialog.find('.preset_card').removeClass('selected');
-            const newActive = oai_settings.preset_settings_openai;
-            if (newActive) {
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === newActive;
-                }).addClass('selected');
-            }
-
-            // Emit the event LAST to avoid being interrupted by other listeners
-            try {
-                await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
-            } catch (err) {
-                console.error('Error emitting PRESET_DELETED', err);
-            }
         }
     });
 
@@ -361,53 +499,19 @@ export async function openPresetCards(): Promise<void> {
         let deletedCount = 0;
 
         for (const nameToDelete of batchSelectedCards) {
-            const value = openai_setting_names[nameToDelete];
-            if (value === undefined) continue;
-
-            $(`#settings_preset_openai option[value="${value}"]`).remove();
-            delete openai_setting_names[nameToDelete];
-
-            if (oai_settings.preset_settings_openai === nameToDelete) {
-                oai_settings.preset_settings_openai = null;
-                activeDeleted = true;
-            }
-
-            const response = await fetch('/api/presets/delete', {
-                method: 'POST',
-                headers: getRequestHeaders(),
-                body: JSON.stringify({ apiId: 'openai', name: nameToDelete }),
+            if (openai_setting_names[nameToDelete] === undefined) continue;
+            const wasActive = oai_settings.preset_settings_openai === nameToDelete;
+            const deleted = await deletePresetByName(nameToDelete, {
+                activeHandling: 'deferred',
+                emitLog: 'Error emitting PRESET_DELETED for batch mode',
             });
-
-            if (response.ok) {
-                deletedCount++;
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === nameToDelete;
-                }).remove();
-                presets = presets.filter(p => p.name !== nameToDelete);
-                try {
-                    await eventSource.emit(event_types.PRESET_DELETED, { apiId: 'openai', name: nameToDelete });
-                } catch (err) {
-                    console.error('Error emitting PRESET_DELETED for batch mode', err);
-                }
-            }
+            if (deleted) deletedCount++;
+            if (wasActive) activeDeleted = true;
         }
 
         if (activeDeleted) {
-            if (Object.keys(openai_setting_names).length) {
-                const newActiveName = Object.keys(openai_setting_names)[0];
-                oai_settings.preset_settings_openai = newActiveName;
-                const newValue = openai_setting_names[newActiveName];
-                $(`#settings_preset_openai option[value="${newValue}"]`).prop('selected', true);
-                $('#settings_preset_openai').trigger('change');
-            }
-
-            dialog.find('.preset_card').removeClass('selected');
-            const newActive = oai_settings.preset_settings_openai;
-            if (newActive) {
-                dialog.find('.preset_card').filter(function () {
-                    return $(this).attr('data-preset-name') === newActive;
-                }).addClass('selected');
-            }
+            reselectFirstPreset();
+            refreshActiveCardSelection();
         }
 
         if (deletedCount > 0) {
@@ -419,49 +523,75 @@ export async function openPresetCards(): Promise<void> {
         dialog.find('#preset_cards_multiselect_btn').trigger('click');
     });
 
-    // ---- Profiles: Add Configuration ----
+    // ---- Profiles: Add Configuration (Save Base Profile) ----
     dialog.on('click', '.preset_card_add_profile_btn', async function (e) {
         e.stopPropagation();
         const card = $(this).closest('.preset_card');
         const name = card.attr('data-preset-name') as string;
         const idx = card.data('preset-index') as number;
 
-        const profileName = await Popup.show.input(L('Configuration name:'), L('e.g., GPT-4 Optimization'));
+        const profileName = await Popup.show.input(L('Base profile name:'), '');
         if (!profileName) return;
 
-        let loadingToast: JQuery | null = null;
+        const preset = openai_settings[idx] as Preset;
+
         if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
-            $('#update_oai_preset').trigger('click');
-            await new Promise<void>(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
+            // 与 ST #update_oai_preset 全量保存语义一致：getChatCompletionPreset(oai_settings) 生成完整 preset 主体
+            // 回写 preset 内存（覆盖 prompts 及 temperature 等非 prompt 设置），prompt_order 独立同步；
+            // 不再触发 #update_oai_preset + 固定 sleep：慢网下保存未完成会采到旧状态，且并发双 POST 有 last-write-wins 竞态。
+            const presetBody = getChatCompletionPreset(oai_settings);
+            Object.assign(preset, presetBody);
+            if (Array.isArray(oai_settings.prompt_order)) {
+                preset.prompt_order = structuredClone(oai_settings.prompt_order);
+            }
         }
 
-        const preset = openai_settings[idx] as Preset;
+        // 首次对该预设 add base：先全量锁定默认基线（编辑前状态），幂等。reset 与 add base 基线 diff 都依赖它。
+        await lockDefaultSnapshot(preset, name, idx);
+
         const meta = readMeta(preset);
         const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
 
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
+        // 新 base 快照须包含本会话缓冲的开关/值编辑：先统一应用缓冲再采集快照
+        const missing = applyBufferedEdits(preset, name, sessionEdits, pendingToggles);
+        if (missing.length > 0) {
+            toastr.warning(`${L('Missing prompts skipped')}: ${missing.join(', ')}`);
+        }
 
+        // 与锁定基线做差异：fields 只存与基线不同的字段（content 差异进 base，又避免全量 content 快照）
         profiles.push({
-            id: Date.now().toString() + Math.floor(Math.random() * 1000),
+            formatVersion: 2,
+            kind: 'prompt_base',
+            id: newProfileId(),
             name: profileName,
-            settings: snapshot
+            prompts: buildBaseSnapshotDiff(preset, meta.defaultSnapshot),
         });
 
         meta.profiles = profiles;
         await saveMeta(name, idx, meta);
-        toastr.success(L('Configuration saved'));
+        toastr.success(L('Base profile saved'));
 
         // Refresh UI
-        const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-        dialog.html($(newHtml).html());
-        dialog.find('#preset_cards_search').trigger('input');
+        await refreshGrid();
     });
 
-    // ---- Profiles: Load Configuration ----
+    // ---- Profiles: Export All Configurations (导出整棵分支树) ----
+    dialog.on('click', '.preset_card_export_all_btn', async function (e) {
+        e.stopPropagation();
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const choice = await chooseFromOptions(L('Export configuration'), [[L('Export all configurations'), 'export']]);
+        if (choice !== 'export') return;
+
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        warnV1ExcludedFromTreeExport(meta);
+        download(buildTreeExportData(meta), `${name}-tree.json`, 'application/json');
+    });
+
+    // ---- Profiles: Load Configuration (click = apply + open profile editor popup) ----
     dialog.on('click', '.preset_card_profile_name', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
@@ -472,27 +602,48 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        // Merge profile settings into the preset, while preserving extensions
-        const ext = preset.extensions;
-        Object.assign(preset, profile.settings);
-        preset.extensions = ext;
+        applyProfileToPreset(preset, profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], { showMissingToast: true });
 
-        // Save to disk so changes persist
-        await saveMeta(name, idx, meta);
+        // 记录最近加载的 profile 为激活（卡片页选中框特效，全局唯一，localStorage 持久化）
+        setActiveProfile({ presetName: name, profileId: String(profileId) });
 
-        toastr.success(L('Configuration loaded'));
+        if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
+            // 主/派生 profile：保存到磁盘并同步运行态，然后打开 profile 编辑器弹窗
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration loaded'));
+            activatePreset(name, idx);
 
-        // If this is the active preset, trigger a native UI reload
-        if (oai_settings.preset_settings_openai === name) {
-            $('#settings_preset_openai').trigger('change');
+            // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲（其他卡的缓冲保留）
+            clearBufferedForName(name, sessionEdits, pendingToggles);
+
+            // 先刷新卡片网格让选中态全局切换，再开弹窗
+            await refreshGrid();
+
+            await openProfileEditorPopup(
+                { sessionEdits, pendingToggles, refreshActivePresetUI, onGridRefresh: () => refreshGrid() },
+                name,
+                idx,
+                profileId,
+            );
+        } else {
+            // v1 全量快照：不弹窗，走现有加载逻辑
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration loaded'));
+
+            // 激活该 preset（若尚未激活）并触发原生 UI 重载
+            activatePreset(name, idx);
+
+            clearBufferedForName(name, sessionEdits, pendingToggles);
+
+            await refreshGrid();
         }
     });
 
-    // ---- Profiles: Update Configuration ----
-    dialog.on('click', '.preset_card_profile_update', async function (e) {
+    // ---- Profiles: Derive from Base ----
+    dialog.on('click', '.preset_card_profile_derive', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
         const profileId = row.data('profile-id');
@@ -500,33 +651,112 @@ export async function openPresetCards(): Promise<void> {
         const name = card.attr('data-preset-name') as string;
         const idx = card.data('preset-index') as number;
 
-        const confirm = await callGenericPopup(L('Overwrite this configuration with current settings?'), POPUP_TYPE.CONFIRM);
-        if (!confirm) return;
+        const preset = openai_settings[idx] as Preset;
+        const meta = readMeta(preset);
+        const parent = getProfile(meta, profileId);
+        if (!parent) return;
 
-        let loadingToast: JQuery | null = null;
-        if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
-            $('#update_oai_preset').trigger('click');
-            await new Promise<void>(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
+        if (!isPromptBaseProfile(parent) && !isPromptDeltaProfile(parent)) {
+            toastr.warning(L('Cannot derive from a legacy profile'));
+            return;
         }
+
+        const deltaName = await Popup.show.input(L('Derived profile name:'), '');
+        if (!deltaName) return;
+
+        const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
+        profiles.push(buildDerivedProfile(parent, deltaName));
+
+        meta.profiles = profiles;
+        await saveMeta(name, idx, meta);
+        toastr.success(L('Derived profile created'));
+
+        // Refresh UI
+        await refreshGrid();
+    });
+
+    // ---- Profiles: Reset to parent (delta -> base; base -> hidden default) ----
+    dialog.on('click', '.preset_card_profile_reset', async function (e) {
+        e.stopPropagation();
+        const row = $(this).closest('.preset_card_profile_row');
+        const profileId = row.data('profile-id');
+        const card = $(this).closest('.preset_card');
+        const name = card.attr('data-preset-name') as string;
+        const idx = card.data('preset-index') as number;
+
+        const confirm = await callGenericPopup(L('Reset this configuration to its parent?'), POPUP_TYPE.CONFIRM);
+        if (!confirm) return;
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        // Snapshot the current preset settings
-        const snapshot = structuredClone(preset);
-        delete snapshot.extensions; // Don't nest extensions
+        if (isPromptDeltaProfile(profile)) {
+            // 派生：回退到其上级（base 或上层 delta）；若无上级则回退到隐藏默认
+            const parentStates = resolveParentStates(profile, meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[]);
+            if (parentStates.length > 0) {
+                applyBaseProfile(preset, {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'parent',
+                    name: 'Parent',
+                    prompts: parentStates,
+                });
+                profile.changes = [];
+            } else {
+                if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
+                    toastr.warning(L('No default baseline available'));
+                    return;
+                }
+                applyDefaultOriginalFields(preset, meta);
+                const tmp: PromptBaseProfile = {
+                    formatVersion: 2,
+                    kind: 'prompt_base',
+                    id: profile.baseId || 'default',
+                    name: 'Default',
+                    prompts: meta.defaultSnapshot,
+                };
+                applyBaseProfile(preset, tmp);
+                profile.changes = [];
+            }
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration reset'));
+            refreshActivePresetUI(name);
+            clearBufferedForName(name, sessionEdits, pendingToggles);
+        } else if (isPromptBaseProfile(profile)) {
+            // 主 profile：回退到隐藏默认基准
+            if (!meta.defaultSnapshot || meta.defaultSnapshot.length === 0) {
+                toastr.warning(L('No default baseline available'));
+                return;
+            }
+            applyDefaultOriginalFields(preset, meta);
+            // 只回写开关；originalFields 是 reset 专用元数据，不随 profile 持久化
+            profile.prompts = structuredClone(meta.defaultSnapshot).map(({ identifier, enabled }) => ({ identifier, enabled }));
+            const tmp: PromptBaseProfile = {
+                formatVersion: 2,
+                kind: 'prompt_base',
+                id: profile.id,
+                name: profile.name,
+                prompts: meta.defaultSnapshot,
+            };
+            applyBaseProfile(preset, tmp);
+            await saveMeta(name, idx, meta);
+            toastr.success(L('Configuration reset'));
+            refreshActivePresetUI(name);
+            clearBufferedForName(name, sessionEdits, pendingToggles);
+        } else {
+            toastr.warning(L('This profile type cannot be reset'));
+            return;
+        }
 
-        profile.settings = snapshot;
-
-        await saveMeta(name, idx, meta);
-        toastr.success(L('Configuration updated'));
+        // Refresh UI
+        await refreshGrid();
     });
 
     // ---- Profiles: Delete Configuration ----
+    // 级联删除：删除 profile 时，递归收集所有派生后代（delta 的 delta……），一并删除。
+    // 弹窗确认时列出将被删除的全部子 node 名称（多行、含嵌套），确认后整棵子树移除。
     dialog.on('click', '.preset_card_profile_delete', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
@@ -537,30 +767,59 @@ export async function openPresetCards(): Promise<void> {
 
         const preset = openai_settings[idx] as Preset;
         const meta = readMeta(preset);
+        const profile = getProfile(meta, profileId);
+        if (!profile) return;
 
-        const confirm = await callGenericPopup(L('Delete this configuration?'), POPUP_TYPE.CONFIRM);
+        const descendantIds = collectDescendantProfileIds(meta, profileId);
+
+        let confirmText = L('Delete this configuration?');
+        if (descendantIds.length > 0) {
+            const names = descendantIds
+                .map((id) => getProfile(meta, id)?.name || id)
+                .join(', ');
+            confirmText += `\n${L('This will also delete the following derived configurations')}: ${names}`;
+        }
+
+        const confirm = await callGenericPopup(confirmText, POPUP_TYPE.CONFIRM);
         if (!confirm) return;
 
-        meta.profiles = (meta.profiles || []).filter(p => p.id !== String(profileId));
+        const deleteIds = new Set([String(profileId), ...descendantIds]);
+        meta.profiles = (meta.profiles || []).filter(p => !deleteIds.has(String(p.id)));
+        const active = getActiveProfile();
+        if (active && active.presetName === name && deleteIds.has(active.profileId)) {
+            setActiveProfile(undefined);
+        }
         await saveMeta(name, idx, meta);
 
-        row.remove();
+        // 整棵子树可能跨多行，重建网格而非仅删当前行
+        await refreshGrid();
     });
 
     // ---- Profiles: Export Configuration ----
-    dialog.on('click', '.preset_card_profile_export', function (e) {
+    dialog.on('click', '.preset_card_profile_export', async function (e) {
         e.stopPropagation();
         const row = $(this).closest('.preset_card_profile_row');
         const profileId = row.data('profile-id');
         const card = $(this).closest('.preset_card');
-        const preset = openai_settings[card.data('preset-index') as number] as Preset;
+        const idx = card.data('preset-index') as number;
+        const preset = openai_settings[idx] as Preset;
 
         const meta = readMeta(preset);
-        const profile = meta.profiles.find(p => p.id === String(profileId));
+        const profile = getProfile(meta, profileId);
         if (!profile) return;
 
-        const data = JSON.stringify(profile.settings, null, 4);
-        download(data, `${profile.name}.json`, 'application/json');
+        const choice = await chooseProfileExportAction();
+        if (choice === 'tree') {
+            // v1 快照无父链可导出，回退为单 profile 导出
+            if (isPromptBaseProfile(profile) || isPromptDeltaProfile(profile)) {
+                warnV1ExcludedFromTreeExport(meta);
+                download(buildTreeExportData(meta, profile.id), `${profile.name}-tree.json`, 'application/json');
+            } else {
+                download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
+            }
+        } else if (choice === 'profile') {
+            download(buildProfileExportData(profile, meta), `${profile.name}.json`, 'application/json');
+        }
     });
 
     // ---- Profiles: Import Configuration ----
@@ -579,7 +838,12 @@ export async function openPresetCards(): Promise<void> {
 
             try {
                 const text = await file.text();
-                const settings = JSON.parse(text) as Record<string, any>;
+                const parsed = JSON.parse(text) as Record<string, any>;
+                // 不可信输入形状防御：JSON 文件必须是对象（v1 settings 快照或带 kind 的 profile）。
+                // null / 原始值 / 数组视为畸形文件，走 catch 报错，避免把非对象塞进 settings 生成垃圾 v1 profile。
+                if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+                    throw new Error('Imported configuration is not a JSON object');
+                }
 
                 let defaultName = file.name.replace(/\.json$/i, '');
                 const profileName = await Popup.show.input(L('Configuration name:'), defaultName, defaultName);
@@ -587,22 +851,17 @@ export async function openPresetCards(): Promise<void> {
 
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
-                const profiles = Array.isArray(meta.profiles) ? meta.profiles : [];
-
-                profiles.push({
-                    id: Date.now().toString() + Math.floor(Math.random() * 1000),
-                    name: profileName,
-                    settings: settings
-                });
+                const existing = Array.isArray(meta.profiles) ? meta.profiles : [];
+                const { profiles, warnings } = mergeImportedProfiles(parsed, existing, profileName, meta.defaultSnapshot);
+                for (const warning of warnings) {
+                    toastr.warning(warning);
+                }
 
                 meta.profiles = profiles;
                 await saveMeta(name, idx, meta);
                 toastr.success(L('Configuration saved'));
 
-                const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
-                dialog.html($(newHtml).html());
-                applyCachedBackgrounds(dialog);
-                dialog.find('#preset_cards_search').trigger('input');
+                await refreshGrid({ applyBackgrounds: true });
             } catch (err) {
                 console.error(err);
                 toastr.error(L('Failed to parse configuration file'));
@@ -631,10 +890,15 @@ export async function openPresetCards(): Promise<void> {
         nameContainer.replaceWith(input);
         input.focus();
 
+        let done = false;
+
         input.on('blur keydown', async function (evt) {
             const key = (evt.originalEvent as KeyboardEvent | undefined)?.key ?? '';
             if (evt.type === 'keydown' && key !== 'Enter' && key !== 'Escape') return;
             evt.stopPropagation();
+            // Enter 提交后 replaceWith 移除 input 会触发 blur 重入，guard 防二次 saveMeta
+            if (done) return;
+            done = true;
 
             const newName = (key === 'Escape') ? currentName : (input.val() as string).trim() || currentName;
 
@@ -653,7 +917,7 @@ export async function openPresetCards(): Promise<void> {
 
                 const preset = openai_settings[idx] as Preset;
                 const meta = readMeta(preset);
-                const profile = meta.profiles.find(p => p.id === String(profileId));
+                const profile = getProfile(meta, profileId);
                 if (profile) {
                     profile.name = newName;
                     await saveMeta(name, idx, meta);
