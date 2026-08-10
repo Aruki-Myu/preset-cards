@@ -31,7 +31,7 @@ class PCManagerCore {
             return true;
         }
 
-        this.activeCharacter = promptManager.activeCharacter;
+        this.activeCharacter = promptManager.activeCharacter || { id: promptManager.configuration?.promptOrder?.dummyId || 100000 };
         const livePrompts = promptManager.serviceSettings.prompts || [];
         const liveOrder = promptManager.getPromptOrderForCharacter(this.activeCharacter) || [];
 
@@ -358,6 +358,13 @@ class PCManagerCore {
             if (idx > -1) {
                 const prompt = this.transactionalState.prompts.find(p => p.identifier === id);
                 this.transactionalState.promptOrder.splice(idx, 1);
+
+                const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples', 'chatHistory', 'main'];
+                const pIdx = this.transactionalState.prompts.findIndex(p => p.identifier === id);
+                if (pIdx > -1 && !CORE_IDS.includes(id)) {
+                    this.transactionalState.prompts.splice(pIdx, 1);
+                }
+
                 if (this.editTargetId === id) {
                     this.editTargetId = null;
                 }
@@ -768,11 +775,20 @@ class PCManagerCore {
 
         promptManager.serviceSettings.prompts = structuredClone(this.transactionalState.prompts);
 
-        const characterList = promptManager.serviceSettings.prompt_order.find(list => String(list.character_id) === String(this.activeCharacter?.id));
+        const targetChar = this.activeCharacter || promptManager.activeCharacter || { id: promptManager.configuration?.promptOrder?.dummyId || 100000 };
+        const characterList = promptManager.serviceSettings.prompt_order.find(list => String(list.character_id) === String(targetChar.id));
         if (characterList) {
             characterList.order = structuredClone(this.transactionalState.promptOrder);
         } else {
-            promptManager.addPromptOrderForCharacter(this.activeCharacter, this.transactionalState.promptOrder);
+            promptManager.addPromptOrderForCharacter(targetChar, this.transactionalState.promptOrder);
+        }
+
+        // Clean up references to deleted prompts across all prompt_order entries
+        const validIds = new Set(this.transactionalState.prompts.map(p => p.identifier));
+        for (const list of promptManager.serviceSettings.prompt_order) {
+            if (Array.isArray(list.order)) {
+                list.order = list.order.filter(o => validIds.has(o.identifier));
+            }
         }
 
         saveSettingsDebounced();
