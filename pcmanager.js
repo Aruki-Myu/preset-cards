@@ -96,24 +96,24 @@ class PCManagerCore {
             const currP = currMap.get(id);
 
             if (!origO || !origP) {
-                this.diffs.push({ type: 'added', id, desc: `新增条目: ${currP?.name || id}` });
+                this.diffs.push({ type: 'added', id, desc: `Added prompt: ${currP?.name || id}` });
                 continue;
             }
             if (origO.enabled !== currO.enabled) {
-                this.diffs.push({ type: 'toggle', id, desc: `${currO.enabled ? '启用' : '禁用'}条目: ${currP?.name || id}` });
+                this.diffs.push({ type: 'toggle', id, desc: `${currO.enabled ? 'Enabled' : 'Disabled'}: ${currP.name}` });
             }
             if (origO.index !== currO.index) {
-                this.diffs.push({ type: 'reorder', id, desc: `移动条目 "${currP?.name || id}" (位置 ${origO.index + 1} -> ${currO.index + 1})` });
+                this.diffs.push({ type: 'reorder', id, desc: `Moved ${currP.name} from pos ${origO.index + 1} to ${currO.index + 1}` });
             }
             if (JSON.stringify(origP) !== JSON.stringify(currP)) {
-                this.diffs.push({ type: 'modify', id, desc: `修改条目内容或参数: ${currP?.name || id}` });
+                this.diffs.push({ type: 'modify', id, desc: `Modified parameters of: ${currP.name}` });
             }
         }
 
         for (const origOrder of this.originalState.promptOrder) {
             if (!currOrderMap.has(origOrder.identifier)) {
                 const origP = origMap.get(origOrder.identifier);
-                this.diffs.push({ type: 'delete', id: origOrder.identifier, desc: `移除条目: ${origP?.name || origOrder.identifier}` });
+                this.diffs.push({ type: 'delete', id: origOrder.identifier, desc: `Deleted prompt: ${origP?.name || origOrder.identifier}` });
             }
         }
     }
@@ -370,7 +370,7 @@ class PCManagerCore {
                 }
                 this.updateListUI();
                 this.updateRightPane();
-                toastr.info(`已移除 "${prompt?.name || id}"，变动已记入待提交中`);
+                toastr.info(`已从列表中移除 "${prompt?.name || id}"`);
             }
         });
 
@@ -613,7 +613,7 @@ class PCManagerCore {
 
         let html = `
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
-            <h3 style="margin: 0;">待提交变动 (Staged Changes)</h3>
+            <h3 style="margin: 0;">Staged Changes</h3>
             <button id="pc-btn-undo-all" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
                 <i class="fa-solid fa-rotate-left"></i> 撤销全部
             </button>
@@ -623,7 +623,7 @@ class PCManagerCore {
         for (const diff of this.diffs) {
             html += `<li class="pc-diff-item diff-${diff.type}">
                 <span class="pc-diff-desc">${escapeHtml(diff.desc)}</span>
-                <button class="pc-btn-undo" data-id="${diff.id}" data-type="${diff.type}"><i class="fa-solid fa-rotate-left"></i> 撤销</button>
+                <button class="pc-btn-undo" data-id="${diff.id}" data-type="${diff.type}"><i class="fa-solid fa-rotate-left"></i> Undo</button>
             </li>`;
         }
         html += '</ul>';
