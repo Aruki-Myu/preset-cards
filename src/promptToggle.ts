@@ -316,6 +316,22 @@ export function findOrderList(preset: Preset, characterId: number | string): any
     return preset.prompt_order.find((x: any) => x && String(x.character_id) === String(characterId));
 }
 
+/** 清理目标策略 prompt_order 列表里引用已不存在 prompt 的孤儿条目（ST 删除 prompt 后残留）。
+ * 仅清目标策略列表（与 syncPromptOrder 一致），避免影响其他角色的 order。 */
+export function pruneStaleOrderEntries(preset: Preset): void {
+    if (!Array.isArray(preset.prompts)) return;
+    const list = findOrderList(preset, resolvePromptOrderTarget());
+    if (!list?.order || !Array.isArray(list.order)) return;
+    const validIds = new Set<string>();
+    for (const p of preset.prompts) {
+        if (p && typeof p.identifier === 'string' && p.identifier) validIds.add(p.identifier);
+    }
+    const filtered = list.order.filter((o: any) => o && validIds.has(o.identifier));
+    if (filtered.length !== list.order.length) {
+        list.order = filtered;
+    }
+}
+
 /**
  * 读取 prompt_order 的写入目标角色 id（策略感知）：
  * - global（默认）→ 100001（ST dummyId，作用于所有角色）；
@@ -483,6 +499,8 @@ export function applyProfileToPreset(
     allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
     opts?: { showMissingToast?: boolean },
 ): void {
+    pruneStaleOrderEntries(preset);
+
     if (isPromptBaseProfile(profile)) {
         applyBaseProfile(preset, profile);
     } else if (isPromptDeltaProfile(profile)) {
