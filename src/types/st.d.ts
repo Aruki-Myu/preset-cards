@@ -85,6 +85,7 @@ declare module '@sillytavern/scripts/popup' {
 declare module '@sillytavern/scripts/openai' {
     /** 每一项: [selector, setting_name, is_checkbox, is_connection] */
     export const settingsToUpdate: Record<string, [string, string, boolean, boolean]>;
+    export function getChatCompletionPreset(settings?: Record<string, unknown>): Record<string, unknown>;
     export const chat_completion_sources: Record<string, string>;
     export let openai_setting_names: Record<string, number>;
     export let openai_settings: Record<string, unknown>[];
