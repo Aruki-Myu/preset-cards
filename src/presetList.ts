@@ -30,8 +30,6 @@ export interface ProfileEntryView {
     editable?: boolean;
     /** 是否允许顺序编辑（仅活动预设、且目标 prompt_order 条目的 order 含该 identifier）。 */
     orderable?: boolean;
-    canMoveUp?: boolean;
-    canMoveDown?: boolean;
 }
 
 /** 单张卡片的视图模型,喂给 cards.html 模板。 */
@@ -133,8 +131,6 @@ export function buildProfileEntries(
             editable: !!prompt && !prompt.system_prompt && !prompt.marker,
             // 顺序编辑仅对活动预设开放（重排非活动预设的 prompt_order 无意义）
             orderable: orderIdx !== undefined,
-            canMoveUp: orderIdx !== undefined && orderIdx > 0,
-            canMoveDown: orderIdx !== undefined && orderIdx < orderCtx.orderLength - 1,
         };
     });
 }
@@ -249,6 +245,7 @@ export function getCardsTemplateContext() {
             importConfig: L('Import configuration'),
             exportAll: L('Export all configurations'),
             rename: L('Rename'),
+            edit: L('Edit'),
             delete: L('Delete'),
             derive: L('Derive Profile'),
             resetProfile: L('Reset to parent'),

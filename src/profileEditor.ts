@@ -261,7 +261,13 @@ export async function openProfileEditorPopup(
             }
             items.push(item);
         }
-        items.sort((a, b) => a.identifier.localeCompare(b.identifier));
+        // 按 entries（prompt_order 展示顺序）排序，而非 identifier 字母序；未知 identifier 排最后
+        const orderIdx = new Map(resolvedCtx.entries.map((e, i) => [e.identifier, i]));
+        items.sort((a, b) => {
+            const ia = orderIdx.get(a.identifier);
+            const ib = orderIdx.get(b.identifier);
+            return (ia ?? Number.MAX_SAFE_INTEGER) - (ib ?? Number.MAX_SAFE_INTEGER);
+        });
         return items;
     }
 
@@ -747,7 +753,9 @@ export async function openProfileEditorPopup(
         } else {
             const profiles = Array.isArray(ctx.meta.profiles) ? ctx.meta.profiles : [];
             const parentEntries = resolveProfilePrompts(ctx.profile, ctx.meta.profiles as (PromptBaseProfile | PromptDeltaProfile)[], new Set());
-            const changes = snapshotToChanges(snapshot, parentEntries, isPromptDeltaProfile(ctx.profile) ? ctx.profile.changes : []);
+            // previousChanges 传空：新建 delta 只存「相对父链解析状态」的净差异（本次快照 + 本次编辑），
+            // 不冗余拷贝源 profile 已持久化的字段差异（否则数据膨胀/导出树冗余）。
+            const changes = snapshotToChanges(snapshot, parentEntries, []);
             profiles.push(buildDerivedProfile(ctx.profile, deltaName as string, changes));
             ctx.meta.profiles = profiles;
             recordDefaultOriginalFields(ctx.meta, name, sessionEdits);

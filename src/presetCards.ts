@@ -1,6 +1,6 @@
 import { getRequestHeaders } from '@sillytavern/script';
 import { renderExtensionTemplateAsync } from '@sillytavern/scripts/extensions';
-import { oai_settings, openai_settings, openai_setting_names, promptManager, settingsToUpdate } from '@sillytavern/scripts/openai';
+import { oai_settings, openai_settings, openai_setting_names, promptManager, settingsToUpdate, getChatCompletionPreset } from '@sillytavern/scripts/openai';
 import { POPUP_TYPE, callGenericPopup, Popup } from '@sillytavern/scripts/popup';
 import { t } from '@sillytavern/scripts/i18n';
 import { download } from '@sillytavern/scripts/utils';
@@ -65,7 +65,7 @@ export async function openPresetCards(): Promise<void> {
     // ---- Helpers ----
     function updateCount(visible: number, total: number): void {
         const el = dialog.find('#preset_cards_count');
-        el.text(visible === total ? `${total} presets` : `${visible} / ${total}`);
+        el.text(visible === total ? `${total} ${L('presets')}` : `${visible} / ${total}`);
     }
 
     // If the preset is currently active, reload it natively and refresh the Prompt Manager list.
@@ -77,13 +77,28 @@ export async function openPresetCards(): Promise<void> {
         }
     }
 
-    // 整卡列表重渲染并触发搜索过滤；applyBackgrounds 时重新应用背景图。重渲染前记住搜索词，渲染后回填。
+    // 激活 preset 并刷新运行态（恰好一次原生 change）：
+    // - 未激活：切到它并触发 change 重载（同卡片点击），刷新卡片高亮；
+    // - 已激活：仅触发 change 刷新（等价旧 refreshActivePresetUI）。
+    // 须在 saveMeta 落盘之后调用（ST onSettingsPresetChange 从内存 openai_settings 重载，不会冲掉已保存改动）。
+    function activatePreset(name: string, idx: number): void {
+        if (oai_settings.preset_settings_openai !== name) {
+            oai_settings.preset_settings_openai = name;
+            $('#settings_preset_openai').val(idx).trigger('change');
+            refreshActiveCardSelection();
+        } else {
+            refreshActivePresetUI(name);
+        }
+    }
+
+    // 整卡列表重渲染并触发搜索过滤；重渲染后默认重新应用背景图（applyCachedBackgrounds 幂等，
+    // 仅对缺失 background-image 的卡片生效，无需逐调用点传 applyBackgrounds）。
     async function refreshGrid(opts?: { applyBackgrounds?: boolean }): Promise<void> {
         const searchEl = dialog.find('#preset_cards_search');
         const query = String(searchEl.val() ?? '');
         const newHtml = await renderExtensionTemplateAsync(EXTENSION_NAME, 'cards', getCardsTemplateContext());
         dialog.html($(newHtml).html());
-        if (opts?.applyBackgrounds) applyCachedBackgrounds(dialog);
+        if (opts?.applyBackgrounds !== false) applyCachedBackgrounds(dialog);
         if (query) dialog.find('#preset_cards_search').val(query);
         if (isConciseMode) dialog.find('#preset_cards_concise_btn').addClass('active');
         dialog.find('#preset_cards_search').trigger('input');
@@ -217,9 +232,9 @@ export async function openPresetCards(): Promise<void> {
         const list = $('<div class="preset_card_profiles_list"></div>');
 
         meta.profiles.forEach(p => {
-            const row = $(`<div class="preset_card_profile_row" data-profile-id="${p.id}" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;">
-                <div class="preset_card_profile_name" style="font-size:14px;">${p.name}</div>
-            </div>`);
+            const row = $('<div class="preset_card_profile_row" style="cursor:pointer; padding:10px 14px; margin-bottom:4px;"></div>')
+                .attr('data-profile-id', String(p.id));
+            row.append($('<div class="preset_card_profile_name" style="font-size:14px;"></div>').text(p.name));
 
             row.on('click', async function () {
                 const profileId = row.data('profile-id');
@@ -232,7 +247,7 @@ export async function openPresetCards(): Promise<void> {
                 toastr.success(L('Configuration loaded'));
                 setActiveProfile({ presetName: name, profileId: String(profileId) });
 
-                refreshActivePresetUI(name);
+                activatePreset(name, idx);
 
                 // 加载已整体覆盖 preset：清该预设的会话缓冲（与非简洁路径一致）
                 clearBufferedForName(name, sessionEdits, pendingToggles);
@@ -374,6 +389,21 @@ export async function openPresetCards(): Promise<void> {
             } else {
                 chipsEl.remove();
             }
+
+            // Update background image
+            const bgImage = meta.bgImage || '';
+            card.toggleClass('has_bg', !!bgImage);
+            let bgEl = card.find('.preset_card_bg_image');
+            if (bgImage) {
+                if (bgEl.length === 0) {
+                    card.append('<div class="preset_card_bg_image"></div>');
+                    bgEl = card.find('.preset_card_bg_image');
+                }
+                bgEl.css('background-image', 'none').attr('data-bg-url', bgImage);
+                applyCachedBackgrounds(card);
+            } else {
+                bgEl.remove();
+            }
         });
     });
 
@@ -503,15 +533,18 @@ export async function openPresetCards(): Promise<void> {
         const profileName = await Popup.show.input(L('Base profile name:'), '');
         if (!profileName) return;
 
-        let loadingToast: JQuery | null = null;
-        if (oai_settings.preset_settings_openai === name) {
-            loadingToast = toastr.info(L('Saving current preset state...'), '', { timeOut: 0, extendedTimeOut: 0 });
-            $('#update_oai_preset').trigger('click');
-            await new Promise<void>(r => setTimeout(r, 800));
-            toastr.clear(loadingToast);
-        }
-
         const preset = openai_settings[idx] as Preset;
+
+        if (oai_settings.preset_settings_openai === name) {
+            // 与 ST #update_oai_preset 全量保存语义一致：getChatCompletionPreset(oai_settings) 生成完整 preset 主体
+            // 回写 preset 内存（覆盖 prompts 及 temperature 等非 prompt 设置），prompt_order 独立同步；
+            // 不再触发 #update_oai_preset + 固定 sleep：慢网下保存未完成会采到旧状态，且并发双 POST 有 last-write-wins 竞态。
+            const presetBody = getChatCompletionPreset(oai_settings);
+            Object.assign(preset, presetBody);
+            if (Array.isArray(oai_settings.prompt_order)) {
+                preset.prompt_order = structuredClone(oai_settings.prompt_order);
+            }
+        }
 
         // 首次对该预设 add base：先全量锁定默认基线（编辑前状态），幂等。reset 与 add base 基线 diff 都依赖它。
         await lockDefaultSnapshot(preset, name, idx);
@@ -581,7 +614,7 @@ export async function openPresetCards(): Promise<void> {
             // 主/派生 profile：保存到磁盘并同步运行态，然后打开 profile 编辑器弹窗
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration loaded'));
-            refreshActivePresetUI(name);
+            activatePreset(name, idx);
 
             // 加载已整体覆盖 preset：本卡此前的未保存编辑已失去意义，清缓冲（其他卡的缓冲保留）
             clearBufferedForName(name, sessionEdits, pendingToggles);
@@ -600,10 +633,8 @@ export async function openPresetCards(): Promise<void> {
             await saveMeta(name, idx, meta);
             toastr.success(L('Configuration loaded'));
 
-            // If this is the active preset, trigger a native UI reload
-            if (oai_settings.preset_settings_openai === name) {
-                $('#settings_preset_openai').trigger('change');
-            }
+            // 激活该 preset（若尚未激活）并触发原生 UI 重载
+            activatePreset(name, idx);
 
             clearBufferedForName(name, sessionEdits, pendingToggles);
 
@@ -859,10 +890,15 @@ export async function openPresetCards(): Promise<void> {
         nameContainer.replaceWith(input);
         input.focus();
 
+        let done = false;
+
         input.on('blur keydown', async function (evt) {
             const key = (evt.originalEvent as KeyboardEvent | undefined)?.key ?? '';
             if (evt.type === 'keydown' && key !== 'Enter' && key !== 'Escape') return;
             evt.stopPropagation();
+            // Enter 提交后 replaceWith 移除 input 会触发 blur 重入，guard 防二次 saveMeta
+            if (done) return;
+            done = true;
 
             const newName = (key === 'Escape') ? currentName : (input.val() as string).trim() || currentName;
 
