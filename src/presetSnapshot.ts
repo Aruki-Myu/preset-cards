@@ -7,7 +7,7 @@ import type { PromptEditBuffer } from './presetBuffers.js';
 import { bufferKey, bufferPrefix } from './presetBuffers.js';
 import { buildDefaultSnapshotLock, findPromptInPreset, filterFields, promptFieldsEqual } from './promptToggle.js';
 
-// 首次对该预设 add base 时全量锁定默认基线：采集全部 prompts 的 {identifier, enabled, originalFields}（白名单4键全量）
+// 首次对该预设 add base 时全量锁定默认基线：采集全部 prompts 的 {identifier, enabled, originalFields}（白名单5键全量）
 // 写入 meta.defaultSnapshot 并持久化。幂等：defaultSnapshotLocked 为 true 时不覆盖（仅首次点加号锁定一次）。
 // 取代旧 ensureDefaultSnapshots 的「仅开关快照 + 打开面板批量回填」——现在只在用户对该预设首次 add base 时锁定，
 // 提供 reset 的可靠出厂基线，也让 add base 能按「与基线的差异」存储（见 buildBaseSnapshotDiff）。

@@ -103,19 +103,8 @@ export function runtimeEnabledFor(prompt: { identifier: string; enabled?: boolea
 }
 
 /**
- * 采集预设全部 prompts 的开关清单（identifier + enabled）。
- * 只过滤掉无 identifier 的条目，纯操作 preset 对象，不碰 UI。
- */
-export function buildPromptToggleSnapshot(preset: Preset): { identifier: string; enabled: boolean }[] {
-    if (!Array.isArray(preset.prompts)) return [];
-    return preset.prompts
-        .filter((p: any) => p && typeof p.identifier === 'string' && p.identifier)
-        .map((p: any) => ({ identifier: p.identifier, enabled: runtimeEnabledFor(p, preset) }));
-}
-
-/**
  * 全量锁定快照：采集预设全部 prompts 的开关 + 白名单值字段（originalFields）。
- * 作为 reset 的出厂基线（lockDefaultSnapshot 用），区别于仅开关的 buildPromptToggleSnapshot。
+ * 作为 reset 的出厂基线（lockDefaultSnapshot 用），区别于仅开关的开关快照。
  */
 export function buildDefaultSnapshotLock(preset: Preset): PromptDefaultSnapshotEntry[] {
     if (!Array.isArray(preset.prompts)) return [];
@@ -155,60 +144,23 @@ export function applyBaseProfile(preset: Preset, profile: PromptBaseProfile): vo
 }
 
 /**
- * 递归解析一个 profile 的完整开关状态：
- * - base：直接返回 prompts；
- * - delta：先解析 parent（base 或上层 delta），再叠加 changes（enabled 覆盖）。
- */
-export function resolveProfileStates(
-    profile: PromptBaseProfile | PromptDeltaProfile,
-    allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
-    seen: Set<string> = new Set(),
-): { identifier: string; enabled: boolean }[] {
-    if (!profile || seen.has(profile.id)) return []; // 防环
-    seen.add(profile.id);
-
-    if (isPromptBaseProfile(profile)) {
-        return structuredClone(profile.prompts);
-    }
-
-    // 非 delta（如 v1 全量快照或未知类型）无父链可解析，安全返回空，绝不抛错
-    if (!isPromptDeltaProfile(profile)) {
-        return [];
-    }
-
-    const parent = allProfiles.find((p) => p.id === profile.baseId);
-    const states = parent
-        ? resolveProfileStates(parent, allProfiles, seen)
-        : [];
-
-    const map = new Map(states.map((s) => [s.identifier, s.enabled]));
-    for (const change of profile.changes) {
-        if (change.enabled !== undefined) {
-            map.set(change.identifier, change.enabled);
-        }
-    }
-
-    return [...map.entries()].map(([identifier, enabled]) => ({ identifier, enabled }));
-}
-
-/**
  * 解析 delta 的直接父 profile（按 baseId 查找，递归走完父链）的有效开关状态。
  * 父缺失或为 v1 快照（无法作为差异基线）时返回空数组。
  */
 export function resolveParentStates(
     profile: PromptDeltaProfile,
     allProfiles: (PromptBaseProfile | PromptDeltaProfile)[],
-): { identifier: string; enabled: boolean }[] {
+): { identifier: string; enabled: boolean; fields?: PromptFields }[] {
     const parent = allProfiles.find((p) => p.id === profile.baseId);
     if (!parent) return [];
-    return resolveProfileStates(parent, allProfiles);
+    return resolveProfilePrompts(parent, allProfiles);
 }
 
 /**
  * 递归解析一个 profile 的完整开关 + 值字段状态（含 fields）：
  * - base：直接返回 prompts（含 fields）；
  * - delta：先解析 parent（base 或上层 delta），再叠加 changes（enabled 覆盖 + fields 合并）。
- * 与 resolveProfileStates 共用递归 + seen 防环骨架，额外聚合 fields。
+ * 共用递归 + seen 防环骨架，额外聚合 fields。
  */
 export function resolveProfilePrompts(
     profile: PromptBaseProfile | PromptDeltaProfile,
@@ -371,7 +323,7 @@ export function syncPromptOrder(
 
 /**
  * 采集预设全部 prompts 的开关 + 可选值字段快照。
- * 过滤逻辑与 buildPromptToggleSnapshot 共用；enabled 用 runtimeEnabledFor。
+ * 过滤逻辑与开关快照共用；enabled 用 runtimeEnabledFor。
  * includeFields 含某 identifier 时附带 fields: capturePromptFields(prompt)。
  */
 export function buildPromptSnapshot(
@@ -398,7 +350,7 @@ export function buildPromptSnapshot(
  * enabled 全量采集（base 语义 = 完整开关快照）；fields 只存「与基线 originalFields 有差异的白名单字段」。
  * - 基线缺失的条目（新增 prompt 等）fields 全量写入；
  * - 与基线一致的条目不写 fields（加载时保持基线/当前值）。
- * 相比旧 buildPromptToggleSnapshot（仅开关），此快照让 add base 保留 content 差异，又避免全量 content 几百 KB。
+ * 相比仅开关的快照，此快照让 add base 保留 content 差异，又避免全量 content 几百 KB。
  * baseline 传 null/undefined（或全无条目）时退化为「开关+全量 fields」快照（兼容旧数据）。
  */
 export function buildBaseSnapshotDiff(
@@ -504,7 +456,7 @@ export function applyProfileToPreset(
     if (isPromptBaseProfile(profile)) {
         applyBaseProfile(preset, profile);
     } else if (isPromptDeltaProfile(profile)) {
-        const states = resolveProfileStates(profile, allProfiles);
+        const states = resolveProfilePrompts(profile, allProfiles);
         if (states.length === 0) {
             toastr.warning(L('Base profile not found, applying changes only'));
         } else {
