@@ -798,11 +798,32 @@
 }
 /* ===== PCManager ===== */
 
+/* ST Generic Popup Container Overrides for PCManager */
+.popup:has(.pc-manager-container) {
+    width: 94vw !important;
+    max-width: 1600px !important;
+    height: 90vh !important;
+    max-height: 950px !important;
+}
+
+.popup:has(.pc-manager-container) .popup-body,
+.popup:has(.pc-manager-container) .popup-content {
+    width: 100% !important;
+    height: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: none !important;
+    max-height: none !important;
+    box-sizing: border-box !important;
+}
+
 .pc-manager-container {
     display: flex;
     flex-direction: column;
-    position: fixed;
-    inset: 10px;
+    width: 100% !important;
+    height: 100% !important;
+    box-sizing: border-box !important;
+    position: relative;
     z-index: 99999;
     background: var(--SmartThemeBlurTintColor, rgba(30, 30, 30, 0.85));
     backdrop-filter: blur(20px);
@@ -812,6 +833,7 @@
     box-shadow: 0 10px 40px rgba(0,0,0,0.5);
     color: var(--SmartThemeBodyColor);
     font-family: var(--default-font, "Inter", sans-serif);
+    min-width: 320px;
 }
 
 .pc-layout {
@@ -996,8 +1018,10 @@
     background: transparent;
     padding: 0;
     border-radius: 0;
-    word-break: break-all;
-    white-space: normal;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 100%;
 }
 
 .pc-role-badge {
