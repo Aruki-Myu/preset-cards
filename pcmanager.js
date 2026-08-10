@@ -768,6 +768,14 @@ class PCManagerCore {
     async commitState() {
         if (this.diffs.length === 0) return;
 
+        const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples', 'chatHistory', 'main'];
+        for (const p of this.transactionalState.prompts) {
+            if (!CORE_IDS.includes(p.identifier)) {
+                if (p.system_prompt === undefined) p.system_prompt = false;
+                if (p.marker === undefined) p.marker = false;
+            }
+        }
+
         promptManager.serviceSettings.prompts = structuredClone(this.transactionalState.prompts);
 
         const targetChar = this.activeCharacter || promptManager.activeCharacter || { id: promptManager.configuration?.promptOrder?.dummyId || 100000 };
@@ -807,6 +815,8 @@ class PCManagerCore {
             name: '未命名条目',
             role: 'system',
             content: '',
+            system_prompt: false,
+            marker: false,
             injection_position: 0
         };
 
