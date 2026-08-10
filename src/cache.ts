@@ -7,6 +7,13 @@ const COOLDOWN_MS = 5 * 60 * 1000;
 const MAX_RETRIES = 3;
 const URL_CACHE = new Map<string, Promise<string>>();
 const FAILED_URLS = new Map<string, { count: number; lastFailedAt: number }>();
+// 本会话创建的 blob objectURL：clearImageCache 时统一 revoke 释放（URL.revokeObjectURL 不影响已渲染的背景图）。
+const CREATED_OBJECT_URLS = new Set<string>();
+
+function trackObjectURL(url: string): string {
+    if (url.startsWith('blob:')) CREATED_OBJECT_URLS.add(url);
+    return url;
+}
 
 function initCacheDb(): Promise<IDBDatabase | null> {
     return new Promise((resolve) => {
@@ -55,7 +62,7 @@ export function getCachedImageURL(url: string): Promise<string> {
 
             req.onsuccess = async () => {
                 if (req.result) {
-                    resolve(URL.createObjectURL(req.result as Blob));
+                    resolve(trackObjectURL(URL.createObjectURL(req.result as Blob)));
                 } else {
                     try {
                         const response = await fetch(url, { mode: 'cors' });
@@ -67,7 +74,7 @@ export function getCachedImageURL(url: string): Promise<string> {
                         const writeTx = db.transaction(CACHE_STORE_NAME, 'readwrite');
                         writeTx.objectStore(CACHE_STORE_NAME).put(blob, url);
 
-                        resolve(URL.createObjectURL(blob));
+                        resolve(trackObjectURL(URL.createObjectURL(blob)));
                     } catch (err) {
                         console.warn('preset-cards: CORS or network error caching image, falling back to original URL.', err);
                         const prev = FAILED_URLS.get(url);
@@ -99,6 +106,8 @@ export function applyCachedBackgrounds(container: JQuery<HTMLElement>): void {
 export async function clearImageCache(): Promise<boolean> {
     URL_CACHE.clear();
     FAILED_URLS.clear();
+    for (const url of CREATED_OBJECT_URLS) URL.revokeObjectURL(url);
+    CREATED_OBJECT_URLS.clear();
     const db = await initCacheDb();
     if (!db) return false;
     return new Promise<boolean>((resolve) => {

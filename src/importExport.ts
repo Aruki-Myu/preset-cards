@@ -47,16 +47,29 @@ export async function chooseFromOptions<T extends string>(title: string, options
     container.append(buttons);
 
     let resolver: (v: T | null) => void;
+    let settled = false;
     const promise = new Promise<T | null>(r => { resolver = r; });
 
     function resolveChoice(v: T | null): void {
-        $(container).closest('.popup').find('.popup-controls .menu_button').click();
+        if (settled) return;
+        settled = true;
         resolver(v);
+        $(container).closest('.popup').find('.popup-controls .menu_button').click();
     }
 
     // okButton: false 用 popup 内置的隐藏行为（TEXT 类型对 false 隐藏 OK 按钮），按钮仍在 DOM，
     // resolveChoice 里 .click() 仍能正常触发关闭
-    callGenericPopup(container, POPUP_TYPE.TEXT, '', { okButton: false, cancelButton: '' });
+    // onClose：Escape 等非按钮关闭路径的兜底，确保 promise 一定 resolve（不永久挂起）；已 settle 时忽略
+    callGenericPopup(container, POPUP_TYPE.TEXT, '', {
+        okButton: false,
+        cancelButton: '',
+        onClose: () => {
+            if (!settled) {
+                settled = true;
+                resolver(null);
+            }
+        },
+    });
     return promise;
 }
 

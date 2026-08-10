@@ -145,5 +145,6 @@ export async function saveMeta(presetName: string, presetIndex: number, meta: Pr
     if (!response.ok) {
         toastr.error(t`Failed to save preset metadata`);
         console.error('Failed to save preset metadata', response);
+        throw new Error('Failed to save preset metadata');
     }
 }

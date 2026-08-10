@@ -172,13 +172,15 @@ export function buildPromptEditForm(
         const name = String(nameInput.val() ?? '');
         const content = String(contentInput.val() ?? '');
         const position = Number(positionSelect.val() ?? 0);
-        const depth = Number(depthInput.val() ?? depthVal);
+        const depthRaw = String(depthInput.val() ?? depthVal);
+        const depth = depthRaw === '' ? NaN : Number(depthRaw);
 
         if (role !== roleVal) fields.role = role;
         if (name !== nameVal) fields.name = name;
         if (!isMarker && content !== contentVal) fields.content = content;
         if (position !== positionVal) fields.injection_position = position;
-        if (position === 2 && depth !== depthVal) fields.injection_depth = depth;
+        // 深度框为空时视为无效（Number('')===0 会误写 injection_depth:0），跳过不写入
+        if (position === 2 && Number.isFinite(depth) && depth !== depthVal) fields.injection_depth = depth;
 
         return Object.keys(fields).length > 0 ? fields : null;
     };
