@@ -1,5 +1,6 @@
-import { saveSettingsDebounced } from '/script.js';
+import { saveSettingsDebounced, main_api } from '/script.js';
 import { promptManager } from '/scripts/openai.js';
+import { getPresetManager } from '/scripts/preset-manager.js';
 import { POPUP_TYPE, callGenericPopup, POPUP_RESULT, Popup } from '/scripts/popup.js';
 import { getSortableDelay, escapeHtml } from '/scripts/utils.js';
 
@@ -777,6 +778,19 @@ class PCManagerCore {
 
         saveSettingsDebounced();
         promptManager.render();
+
+        try {
+            const pm = getPresetManager(main_api);
+            if (pm) {
+                const selectedPresetName = pm.getSelectedPresetName();
+                if (selectedPresetName) {
+                    await pm.savePreset(selectedPresetName);
+                }
+            }
+        } catch (e) {
+            console.error('PCManager failed to save preset', e);
+        }
+
         toastr.success('PCManager: Changes committed.');
 
         this.diffs = [];
