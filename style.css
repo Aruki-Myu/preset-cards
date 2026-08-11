@@ -238,6 +238,15 @@
     line-height: 1.3;
 }
 
+/* 右上角操作按钮组 + Active 徽章：竖排，按钮在上徽章在下 */
+.preset_card_header_right {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
 /* Active badge */
 .preset_card_active_badge {
     display: none;
@@ -262,12 +271,13 @@
     display: flex;
     align-items: center;
     gap: 2px;
+    visibility: hidden;
     opacity: 0;
     transition: opacity 0.15s ease;
-    margin-left: auto;
 }
 
 .preset_card:hover .preset_card_actions {
+    visibility: visible;
     opacity: 1;
 }
 
@@ -596,6 +606,59 @@
     min-height: 64px;
 }
 
+/* 采样参数区块：T/P/K/Context/Tokens/Stream 三列网格 */
+.preset_edit_section_title {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.7;
+    margin: 12px 0 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.preset_edit_sampling_grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 8px;
+    margin-bottom: 4px;
+}
+
+.preset_edit_sampling_grid .preset_edit_field input[type="number"] {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 6px;
+    background: var(--SmartThemeBlurTintColor);
+    color: var(--SmartThemeBodyColor);
+    font-size: 13px;
+    outline: none;
+    box-sizing: border-box;
+    font-family: inherit;
+    transition: border-color 0.2s ease;
+}
+
+.preset_edit_sampling_grid .preset_edit_field input[type="number"]:focus {
+    border-color: var(--SmartThemeQuoteColor);
+}
+
+.preset_edit_sampling_grid .preset_edit_field input[type="number"]::placeholder {
+    opacity: 0.4;
+}
+
+.preset_edit_stream_wrap {
+    display: flex;
+    align-items: center;
+    height: 36px;
+}
+
+.preset_edit_stream_wrap input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--SmartThemeQuoteColor);
+    cursor: pointer;
+}
+
 /* Model selector in edit */
 .preset_edit_models_grid {
     display: flex;
@@ -712,6 +775,70 @@
     gap: 4px;
 }
 
+/* 分组折叠：每组 = 一行 + 可折叠子级容器。默认折叠（children 隐藏），点 toggle 展开。 */
+.preset_card_profile_group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.preset_card_profile_children {
+    display: none;
+    flex-direction: column;
+    gap: 2px;
+    margin-left: 14px;
+    border-left: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25);
+    padding-left: 6px;
+}
+
+/* 子节点连接线：每个子 profile 左侧的 L 形箭头，指向该行垂直中线。
+   竖线(border-left)在 14px；折叠图标左移对齐到该竖线；
+   横线从竖线连到子行中线。 */
+.preset_card_profile_children > .preset_card_profile_group > .preset_card_profile_row::before {
+    content: '';
+    position: absolute;
+    left: -6px;
+    top: 50%;
+    width: 5px;
+    height: 1px;
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25);
+    transform: translateY(-50%);
+    pointer-events: none;
+}
+
+.preset_card_profile_group.expanded > .preset_card_profile_children {
+    display: flex;
+}
+
+.preset_card_profile_toggle {
+    position: absolute;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 18px;
+    flex-shrink: 0;
+    cursor: pointer;
+    font-size: 11px;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.6;
+    transition: transform 0.2s ease, opacity 0.2s;
+    border-radius: 4px;
+    margin: 0;
+}
+
+.preset_card_profile_toggle:hover {
+    opacity: 1;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.preset_card_profile_group.expanded > .preset_card_profile_row .preset_card_profile_toggle i {
+    transform: rotate(90deg);
+}
+
 .preset_card_profile_row {
     display: flex;
     justify-content: space-between;
@@ -721,12 +848,19 @@
     border-radius: 6px;
     font-size: 12px;
     transition: all 0.2s ease;
-    border: 1px solid transparent;
+    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.15);
+    position: relative;
+}
+
+/* 有折叠图标（有子节点）的行：内容起点右移到 14px，与 children 竖线对齐；
+   徽章/名称从竖线位置开始，折叠图标贴行左缘。叶子行保持默认 padding。 */
+.preset_card_profile_row:has(.preset_card_profile_toggle) {
+    padding-left: 14px;
 }
 
 .preset_card_profile_row:hover {
     background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.05);
-    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
+    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.45);
 }
 
 /* 当前激活的 profile：选中框特效 */
@@ -736,6 +870,8 @@
     box-shadow: 0 0 0 1px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25),
         0 2px 8px rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.25);
 }
+
+/* 派生关系：分组折叠（base/delta 每级独立折叠）。旧树线样式已废弃删除。 */
 
 .preset_card_profile_name_wrap {
     display: flex;
@@ -747,26 +883,23 @@
 }
 
 .preset_card_profile_badge {
-    font-size: 9px;
-    font-weight: 700;
-    letter-spacing: 0.4px;
-    padding: 1px 5px;
+    font-size: 10px;
+    padding: 2px 6px;
     border-radius: 4px;
-    line-height: 1.6;
+    line-height: 1.4;
     flex-shrink: 0;
     white-space: nowrap;
-}
-
-.preset_card_profile_badge.badge_base {
-    color: var(--SmartThemeQuoteColor);
-    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.12);
-    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.35);
-}
-
-.preset_card_profile_badge.badge_delta {
     color: #e6a23c;
     background: rgba(230, 162, 60, 0.12);
     border: 1px solid rgba(230, 162, 60, 0.35);
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.preset_card_profile_badge:hover {
+    color: #ffb648;
+    border-color: rgba(230, 162, 60, 0.6);
+    background: rgba(230, 162, 60, 0.2);
 }
 
 .preset_card_profile_name {
@@ -1020,13 +1153,6 @@
     text-align: left;
 }
 
-.preset_cards_prompt_edit_title {
-    margin: 0;
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--SmartThemeBodyColor);
-}
-
 .preset_cards_prompt_edit_marker_notice {
     font-size: 12px;
     color: #e6a23c;
@@ -1116,21 +1242,8 @@
 .preset_card_profile_edit:hover,
 .preset_card_profile_update:hover,
 .preset_card_profile_export:hover,
-.preset_card_profile_derive:hover,
 .preset_card_profile_reset:hover {
     color: var(--SmartThemeQuoteColor);
-}
-
-.preset_card_profile_edit_input {
-    width: 100%;
-    background: var(--SmartThemeBlurTintColor);
-    border: 1px solid var(--SmartThemeQuoteColor);
-    color: var(--SmartThemeBodyColor);
-    border-radius: 4px;
-    padding: 2px 6px;
-    font-size: 12px;
-    outline: none;
-    font-family: inherit;
 }
 
 /* ---- Mobile / Touch adaptations ---- */
@@ -1222,21 +1335,10 @@
 
 .pc-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
     margin-bottom: 16px;
-}
-
-.pc-header h2 {
-    margin: 0;
-    font-size: 1.15rem;
-    font-weight: 600;
-}
-
-.pc-header-controls {
-    display: flex;
-    gap: 8px;
-    align-items: center;
 }
 
 .pc-prompt-list {
@@ -1267,9 +1369,17 @@
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* 未激活条目：参考 ST PromptManager（promptmanager.css:198-209），只淡化名称文字并弱化边框，
+   保留卡片结构可见（不做整卡 opacity/grayscale，避免在部分主题下颜色几乎消失）。 */
 .pc-prompt-card.disabled {
-    opacity: 0.5;
-    filter: grayscale(1);
+    background: var(--SmartThemeButtonDisplayColor, rgba(255, 255, 255, 0.03));
+    border-color: var(--SmartThemeButtonBorderColor, rgba(255, 255, 255, 0.08));
+    filter: none;
+    opacity: 1;
+}
+
+.pc-prompt-card.disabled .pc-card-name {
+    color: var(--white30a, rgba(255, 255, 255, 0.3));
 }
 
 .pc-card-header {
@@ -1354,11 +1464,17 @@
     background: transparent;
     border: 1px solid var(--SmartThemeBorderColor);
     color: var(--SmartThemeBodyColor);
-    padding: 4px 12px;
+    width: 32px;
+    height: 28px;
+    padding: 0;
     border-radius: 6px;
     cursor: pointer;
-    font-size: 0.8rem;
-    transition: background 0.15s;
+    font-size: 16px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 .pc-btn-toggle:hover {
@@ -1381,6 +1497,17 @@
 
 .pc-top-action-btn:hover {
     background: var(--SmartThemeButtonHoverColor, rgba(255,255,255,0.1));
+}
+
+.pc-btn-lock.active {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.2);
+    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.5);
+    color: var(--SmartThemeQuoteColor);
+}
+
+.pc-btn-reset:hover {
+    color: var(--SmartThemeQuoteColor);
+    border-color: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.5);
 }
 
 .pc-btn-commit {
@@ -1534,39 +1661,136 @@
     margin-bottom: 12px;
     padding-bottom: 12px;
     border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
-}
-
-/* 头部：profile 名 + 徽章 + 下方小字 preset 名 */
-.pc-header h2 {
-    display: flex;
-    flex-direction: column;
-    gap: 3px;
-    min-width: 0;
-    flex: 1;
-}
-
-.pc-header-title-row {
     display: flex;
     align-items: center;
     gap: 8px;
+}
+
+.pc-search-bar .pc-search-input {
+    flex: 1;
+    min-width: 0;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* 手机端：暂存按钮移入搜索栏左侧；桌面端隐藏该实例 */
+#pc-btn-view-staged-mobile {
+    display: none;
+}
+
+/* 返回按钮：仅手机端暂存视图显示，默认隐藏 */
+.pc-btn-back {
+    display: none;
+}
+
+/* 头部三段式：第一行 preset 名（居右退出按钮）/ 第二行面包屑+改名 / 第三行暂存提交重置 */
+.pc-header-preset-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
     min-width: 0;
 }
 
-.pc-header-profile-name {
+.pc-header-preset-name {
+    font-size: 1.15rem;
+    font-weight: 600;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+    flex: 1;
+    min-width: 0;
+    text-align: center;
+}
+
+.pc-header-breadcrumb-row {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 6px;
     min-width: 0;
 }
 
-.pc-header-subtitle {
-    font-size: 0.7rem;
-    font-weight: normal;
+.pc-header-breadcrumb {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    white-space: nowrap;
+}
+
+.pc-breadcrumb-item {
+    font-size: 0.8rem;
     color: var(--SmartThemeBodyColor);
-    opacity: 0.5;
+    opacity: 0.6;
     white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    flex-shrink: 0;
+}
+
+.pc-breadcrumb-item.pc-breadcrumb-current {
+    opacity: 1;
+    color: var(--SmartThemeQuoteColor);
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.pc-breadcrumb-sep {
+    font-size: 0.7rem;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.35;
+    flex-shrink: 0;
+}
+
+.pc-btn-rename {
+    background: transparent;
+    border: none;
+    color: var(--SmartThemeBodyColor);
+    opacity: 0.6;
+    cursor: pointer;
+    padding: 1px 4px;
+    font-size: 0.7rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    transition: all 0.2s;
+    flex-shrink: 0;
+}
+
+.pc-btn-rename:hover {
+    opacity: 1;
+    color: var(--SmartThemeQuoteColor);
+}
+
+.pc-header-rename-input {
+    width: 180px;
+    background: var(--SmartThemeBlurTintColor);
+    border: 1px solid var(--SmartThemeQuoteColor);
+    color: var(--SmartThemeBodyColor);
+    border-radius: 4px;
+    padding: 2px 6px;
+    font-size: 0.85rem;
+    outline: none;
+    font-family: inherit;
+}
+
+.pc-header-actions-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+}
+
+.pc-header-actions-center {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    flex: 1;
+    justify-content: center;
+    min-width: 0;
 }
 
 /* 卡片高亮：dirty（会话缓冲未提交）与 persistent（本 profile 持久差异） */
@@ -1602,6 +1826,26 @@
 
 .pc-drag-handle:active {
     cursor: grabbing;
+}
+
+/* 列表锁定：隐藏拖拽把手、清除按钮禁用视觉，编辑入口不再响应 */
+.pc-prompt-list.pc-locked .pc-drag-handle {
+    opacity: 0.1;
+    cursor: not-allowed;
+}
+
+.pc-prompt-list.pc-locked .pc-card-clear {
+    opacity: 0.2;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.pc-prompt-list.pc-locked .pc-prompt-card {
+    cursor: default;
+}
+
+.pc-prompt-list.pc-locked .pc-prompt-card:hover {
+    background: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, 0.05));
 }
 
 /* 清除按钮 */
@@ -1677,6 +1921,7 @@
     display: flex;
     flex-direction: column;
     gap: 16px;
+    width: min(100%, 560px);
 }
 
 /* ---- PCManager 手机端：单栏列表 + 右栏覆盖（对齐上游 319c2da） ---- */
@@ -1718,16 +1963,16 @@
     font-size: 1.1rem;
     font-weight: 800;
     color: var(--SmartThemeBodyColor);
-    min-width: 48px;
+    min-width: 5ch;
     text-align: center;
-    margin-right: 8px;
+    margin-right: 6px;
     user-select: none;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 6px;
-    padding: 8px 6px;
-    margin-left: -6px;
+    padding: 8px 4px;
+    margin-left: -4px;
     border-radius: 6px;
     transition: background 0.2s, opacity 0.2s;
     opacity: 0.6;
@@ -1750,7 +1995,12 @@
 .pc-role-badge.role-user { background: rgba(16, 185, 129, 0.2); color: #34d399; }
 .pc-role-badge.role-assistant { background: rgba(139, 92, 246, 0.2); color: #a78bfa; }
 
-/* 编辑界面内容栏：放大 Prompt Text */
+/* 编辑界面内容栏：放大 Prompt Text，且让表单填满（不沿用 420px 限制），与 header 保存/取消右缘对齐 */
+.pc-edit-area .preset_cards_prompt_edit_form {
+    width: 100%;
+    max-width: none;
+}
+
 .pc-edit-area .preset_cards_prompt_edit_form textarea {
     min-height: 300px;
     font-size: 15px;
@@ -1766,10 +2016,6 @@
     margin-top: 12px;
 }
 
-.pc-mobile-nav {
-    display: none;
-}
-
 @media (min-width: 769px) {
     .pc-left-pane {
         display: flex !important;
@@ -1777,52 +2023,85 @@
     .pc-right-pane {
         display: flex !important;
     }
-    .pc-mobile-nav {
-        display: none !important;
-    }
 }
 
 @media (max-width: 768px) {
     .pc-manager-container {
-        inset: 6px;
+        inset: 3vh 6px;
         padding: 12px;
         border-radius: 10px;
     }
 
     .pc-layout {
         gap: 0;
+        flex-direction: column;
     }
 
     .pc-left-pane {
         display: flex;
         width: 100%;
         padding: 12px;
+        flex: 1;
+        min-height: 0;
     }
 
     .pc-right-pane {
         display: none;
         width: 100%;
         padding: 12px;
+        flex: 1;
+        min-height: 0;
     }
 
     .pc-layout.pc-show-right .pc-left-pane {
-        display: none !important;
+        flex: 0 0 auto;
+    }
+
+    /* 手机端：header 只保留 reset/commit，暂存按钮移入搜索栏左侧 */
+    #pc-btn-view-staged-desktop {
+        display: none;
+    }
+
+    #pc-btn-view-staged-mobile {
+        display: flex;
+        flex-shrink: 0;
+    }
+
+    /* diff 视图：保留 header（commit/reset/close 退出入口），隐藏列表区与搜索输入，
+       搜索栏行保留一个右侧返回按钮退回列表视图 */
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane .pc-search-input,
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane #pc-btn-view-staged-mobile,
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane #pc-btn-view-staged-desktop,
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane .pc-prompt-list {
+        display: none;
+    }
+
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane .pc-search-bar {
+        justify-content: flex-end;
+        border-bottom: none;
+        padding-bottom: 0;
+        margin-bottom: 8px;
+    }
+
+    .pc-layout.pc-show-right:not(.pc-editing) .pc-left-pane .pc-btn-back {
+        display: flex;
+    }
+
+    /* 编辑表单态：编辑表单自带 Save/Cancel，隐藏整个左栏（含 header）让右栏全高 */
+    .pc-layout.pc-show-right.pc-editing .pc-left-pane {
+        display: none;
     }
 
     .pc-layout.pc-show-right .pc-right-pane {
         display: flex !important;
     }
 
-    .pc-mobile-nav {
-        display: flex;
-        align-items: center;
-        margin-bottom: 12px;
-        padding-bottom: 10px;
-        border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    .pc-header-preset-name {
+        font-size: 1rem;
     }
 
-    .pc-header h2 {
-        font-size: 1rem;
+    .pc-header-rename-input {
+        width: 140px;
     }
 }
 
