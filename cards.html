@@ -45,20 +45,22 @@
                     <span class="preset_card_source_line" title="{{this.sourceAndModel}}">{{this.sourceAndModel}}</span>
                     {{/if}}
                 </div>
-                <span class="preset_card_active_badge" data-i18n="Active">Active</span>
-                <div class="preset_card_actions">
-                    <button class="preset_card_export_btn menu_button" title="{{../i18n.exportConfig}}" data-preset-name="{{this.name}}"
-                        data-preset-index="{{this.index}}">
-                        <i class="fa-solid fa-file-export"></i>
-                    </button>
-                    <button class="preset_card_edit_btn menu_button" title="{{../i18n.edit}}" data-preset-name="{{this.name}}"
-                        data-preset-index="{{this.index}}">
-                        <i class="fa-solid fa-pen-to-square"></i>
-                    </button>
-                    <button class="preset_card_delete_btn menu_button" title="{{../i18n.delete}}" data-preset-name="{{this.name}}"
-                        data-preset-index="{{this.index}}">
-                        <i class="fa-solid fa-trash-can"></i>
-                    </button>
+                <div class="preset_card_header_right">
+                    <div class="preset_card_actions">
+                        <button class="preset_card_export_btn menu_button" title="{{../i18n.exportConfig}}" data-preset-name="{{this.name}}"
+                            data-preset-index="{{this.index}}">
+                            <i class="fa-solid fa-file-export"></i>
+                        </button>
+                        <button class="preset_card_edit_btn menu_button" title="{{../i18n.edit}}" data-preset-name="{{this.name}}"
+                            data-preset-index="{{this.index}}">
+                            <i class="fa-solid fa-pen-to-square"></i>
+                        </button>
+                        <button class="preset_card_delete_btn menu_button" title="{{../i18n.delete}}" data-preset-name="{{this.name}}"
+                            data-preset-index="{{this.index}}">
+                            <i class="fa-solid fa-trash-can"></i>
+                        </button>
+                    </div>
+                    <span class="preset_card_active_badge" data-i18n="Active">Active</span>
                 </div>
             </div>
             <div class="preset_card_body">
@@ -92,22 +94,29 @@
                         </div>
                     </div>
                     <div class="preset_card_profiles_list">
-                        {{#each this.profiles}}
-                        <div class="preset_card_profile_row {{#if this.isActiveProfile}}active{{/if}}" data-profile-id="{{this.id}}">
-                            <div class="preset_card_profile_name_wrap">
-                                {{#if this.isBase}}<span class="preset_card_profile_badge badge_base">base</span>{{/if}}
-                                {{#if this.isDelta}}{{#if this.parentName}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{this.parentName}}</span>{{else}}<span class="preset_card_profile_badge badge_delta" title="{{../../i18n.derivedFrom}}">{{../../i18n.derived}}</span>{{/if}}{{/if}}
-                                <div class="preset_card_profile_name" title="{{../../i18n.loadConfig}}">{{this.name}}</div>
+                        {{#*inline "profileNode"}}
+                        <div class="preset_card_profile_group">
+                            <div class="preset_card_profile_row {{#if this.isActiveProfile}}active{{/if}}" data-profile-id="{{this.id}}">
+                                {{#if this.childCount}}<span class="preset_card_profile_toggle"><i class="fa-solid fa-caret-right"></i></span>{{/if}}
+                                <div class="preset_card_profile_name_wrap">
+                                    <i class="fa-solid fa-code-fork preset_card_profile_derive preset_card_profile_badge" title="{{@root.i18n.derive}}"></i>
+                                    <div class="preset_card_profile_name" title="{{@root.i18n.loadConfig}}">{{this.name}}</div>
+                                </div>
+                                <div class="preset_card_profile_actions">
+                                    {{#if this.isActiveProfile}}<i class="fa-solid fa-pencil preset_card_profile_edit" title="{{@root.i18n.edit}}"></i>{{/if}}
+                                    <i class="fa-solid fa-rotate-left preset_card_profile_reset" title="{{@root.i18n.resetProfile}}"></i>
+                                    <i class="fa-solid fa-file-export preset_card_profile_export" title="{{@root.i18n.exportConfig}}"></i>
+                                    <i class="fa-solid fa-trash-can preset_card_profile_delete" title="{{@root.i18n.delete}}"></i>
+                                </div>
                             </div>
-                            <div class="preset_card_profile_actions">
-                                <i class="fa-solid fa-code-fork preset_card_profile_derive" title="{{../../i18n.derive}}"></i>
-                                <i class="fa-solid fa-rotate-left preset_card_profile_reset" title="{{../../i18n.resetProfile}}"></i>
-                                <i class="fa-solid fa-file-export preset_card_profile_export" title="{{../../i18n.exportConfig}}"></i>
-                                <i class="fa-solid fa-pencil preset_card_profile_edit" title="{{../../i18n.rename}}"></i>
-                                <i class="fa-solid fa-trash-can preset_card_profile_delete" title="{{../../i18n.delete}}"></i>
+                            {{#if this.children.length}}
+                            <div class="preset_card_profile_children">
+                                {{#each this.children}}{{> profileNode}}{{/each}}
                             </div>
+                            {{/if}}
                         </div>
-                        {{/each}}
+                        {{/inline}}
+                        {{#each this.profiles}}{{> profileNode}}{{/each}}
                     </div>
                 </div>
             </div>
