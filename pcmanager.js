@@ -1,7 +1,276 @@
-import { saveSettingsDebounced } from '/script.js';
+import { saveSettingsDebounced, substituteParams } from '/script.js';
 import { promptManager } from '/scripts/openai.js';
 import { POPUP_TYPE, callGenericPopup, POPUP_RESULT, Popup } from '/scripts/popup.js';
 import { getSortableDelay, escapeHtml } from '/scripts/utils.js';
+
+// ── Module-level constants ──────────────────────────────────────────
+
+const CORE_IDS = new Set([
+    'worldInfoBefore', 'worldInfoAfter', 'charDescription',
+    'charPersonality', 'scenario', 'dialogueExamples',
+]);
+
+const CORE_IDS_WITH_MAIN = new Set([...CORE_IDS, 'chatHistory', 'main']);
+
+const ROLE_COLOR_MAP = {
+    system: 'var(--SmartThemeQuoteColor, #60a5fa)',
+    user: 'var(--SmartThemeBodyColor, #34d399)',
+    assistant: 'var(--SmartThemeQuoteColor, #a78bfa)',
+};
+
+function getPromptText(prompt) {
+    return prompt.content || prompt.prompt || '';
+}
+
+function escapeRegExp(string) {
+    return string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// ── Injected CSS for PCManager (replaces inline styles) ─────────────
+
+const PCM_INJECTED_STYLES = `
+.pc-var-badge {
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 2px 6px;
+    border-radius: 4px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.pc-setvar-badge {
+    background: rgba(16, 185, 129, 0.2);
+    color: #34d399;
+}
+.pc-addvar-badge {
+    background: rgba(245, 158, 11, 0.2);
+    color: #f59e0b;
+}
+.pc-getvar-badge {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+}
+.pc-getvar-badge.pc-var-unset {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+}
+.pc-btn-remove {
+    background: rgba(239, 68, 68, 0.1);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.2);
+    padding: 4px 8px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.8rem;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+.pc-card-controls {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.pc-card-title-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    max-width: 100%;
+}
+.pc-overview-item {
+    background: rgba(var(--SmartThemeBodyColorRgb, 200, 200, 200), 0.04);
+    border: 1px solid var(--SmartThemeBorderColor);
+    border-radius: 8px;
+    overflow: hidden;
+    text-align: left;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+.pc-overview-item:hover {
+    border-color: var(--SmartThemeQuoteColor);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+}
+.pc-overview-item-header {
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.08);
+    border-bottom: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
+    padding: 6px 12px;
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--SmartThemeBodyColor);
+    display: flex;
+    justify-content: space-between;
+    text-align: left;
+}
+.pc-overview-item-body {
+    padding: 12px;
+    font-size: 0.9rem;
+    white-space: pre-wrap;
+    font-family: 'JetBrains Mono', 'Courier New', Courier, monospace;
+    opacity: 0.9;
+    color: var(--SmartThemeBodyColor);
+    word-break: break-word;
+}
+.pc-toolbar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1));
+    align-items: center;
+}
+.pc-toolbar-search-wrap {
+    flex: 1;
+    position: relative;
+}
+.pc-toolbar-search-icon {
+    position: absolute;
+    left: 10px;
+    top: 50%;
+    transform: translateY(-50%);
+    opacity: 0.4;
+    font-size: 0.85rem;
+    pointer-events: none;
+}
+.pc-btn-create {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: 6px;
+}
+.pc-btn-import {
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    border-radius: 6px;
+}
+.pc-btn-undo-all {
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    border: 1px solid rgba(239, 68, 68, 0.3);
+    padding: 4px 10px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
+}
+.pc-editor-footer {
+    display: flex;
+    gap: 8px;
+    justify-content: flex-start;
+    margin-top: 16px;
+}
+.pc-overview-header {
+    margin-bottom: 12px;
+    flex-shrink: 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+.pc-macro-toggle-label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--SmartThemeBodyColor);
+    background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1);
+    padding: 4px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.3);
+}
+.pc-overview-content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-bottom: 20px;
+    overflow-y: auto;
+    flex: 1;
+    padding-right: 8px;
+}
+.pc-core-warning {
+    color: #ef4444;
+    font-size: 0.8rem;
+    margin-bottom: 12px;
+    padding: 8px;
+    background: rgba(239, 68, 68, 0.1);
+    border-radius: 6px;
+}
+.pc-import-btn-add {
+    background: rgba(59, 130, 246, 0.2);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.4);
+    padding: 6px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+.pc-import-btn-delete {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border: 1px solid rgba(239, 68, 68, 0.4);
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: 600;
+}
+.pc-diff-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+}
+/* Syntax highlight spans in overview */
+.pc-hl-setvar { background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
+.pc-hl-addvar { background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
+.pc-hl-getvar { background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
+.pc-hl-trim { background: rgba(168, 85, 247, 0.2); color: #c084fc; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
+.pc-hl-comment { background: rgba(156, 163, 175, 0.2); color: #9ca3af; padding: 2px 4px; border-radius: 4px; font-style: italic; }
+.pc-hl-macro { background: rgba(20, 184, 166, 0.15); color: #14b8a6; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
+.pc-hl-resolved { background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 0 4px; border-radius: 4px; border-bottom: 1px dashed rgba(59, 130, 246, 0.5); }
+.pc-core-placeholder { color: var(--SmartThemeQuoteColor, #60a5fa); opacity: 0.8; }
+.pc-role-indicator { opacity: 0.8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; }
+`;
+
+let pcmStylesInjected = false;
+
+function injectPCMStyles() {
+    if (pcmStylesInjected) return;
+    const styleEl = document.createElement('style');
+    styleEl.id = 'pc-manager-injected-styles';
+    styleEl.textContent = PCM_INJECTED_STYLES;
+    document.head.appendChild(styleEl);
+    pcmStylesInjected = true;
+}
+
+// ── PCManagerCore class ─────────────────────────────────────────────
 
 class PCManagerCore {
     constructor() {
@@ -14,6 +283,7 @@ class PCManagerCore {
             promptOrder: [],
         };
         this.diffs = [];
+        this._dirty = true;
         this.isOpen = false;
         this.dialog = null;
         this.activeCharacter = null;
@@ -44,6 +314,7 @@ class PCManagerCore {
             promptOrder: structuredClone(liveOrder),
         };
         this.diffs = [];
+        this._dirty = true;
         this.editTargetId = null;
         this.showOverview = false;
         this.macroMode = false;
@@ -82,6 +353,9 @@ class PCManagerCore {
     }
 
     computeDiffs() {
+        if (!this._dirty) return;
+        this._dirty = false;
+
         this.diffs = [];
         const origMap = new Map(this.originalState.prompts.map(p => [p.identifier, p]));
         const currMap = new Map(this.transactionalState.prompts.map(p => [p.identifier, p]));
@@ -119,6 +393,8 @@ class PCManagerCore {
     }
 
     async renderUI() {
+        injectPCMStyles();
+
         const container = document.createElement('div');
         container.className = 'pc-manager-container';
         container.innerHTML = `
@@ -133,15 +409,15 @@ class PCManagerCore {
                             <button id="pc-btn-close" class="pc-top-action-btn" title="Close"><i class="fa-solid fa-times"></i></button>
                         </div>
                     </div>
-                    <div class="pc-toolbar" style="display: flex; gap: 8px; margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255, 255, 255, 0.1)); align-items: center;">
-                        <div style="flex: 1; position: relative;">
+                    <div class="pc-toolbar">
+                        <div class="pc-toolbar-search-wrap">
                             <input type="text" id="pc-search-input" class="pc-form-control" placeholder="搜索条目名称或内部提示词..." style="width: 100%; box-sizing: border-box; padding-left: 28px;" />
-                            <i class="fa-solid fa-search" style="position: absolute; left: 10px; top: 50%; transform: translateY(-50%); opacity: 0.4; font-size: 0.85rem; pointer-events: none;"></i>
+                            <i class="fa-solid fa-search pc-toolbar-search-icon"></i>
                         </div>
-                        <button id="pc-btn-create-prompt" class="pc-top-action-btn" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3); display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 6px;" title="新建一个全新的提示词条目">
+                        <button id="pc-btn-create-prompt" class="pc-top-action-btn pc-btn-create" title="新建一个全新的提示词条目">
                             <i class="fa-solid fa-plus"></i> 新建条目
                         </button>
-                        <button id="pc-btn-import-prompt" class="pc-top-action-btn" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.3); display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px; font-weight: 600; white-space: nowrap; cursor: pointer; border-radius: 6px;" title="从提示词库中引入未在当前列表的条目">
+                        <button id="pc-btn-import-prompt" class="pc-top-action-btn pc-btn-import" title="从提示词库中引入未在当前列表的条目">
                             <i class="fa-solid fa-folder-plus"></i> 引入条目
                         </button>
                     </div>
@@ -158,6 +434,85 @@ class PCManagerCore {
             </div>
         `;
         this.dialog = $(container);
+
+        // ── Event delegation on the prompt list container ──
+        const listEl = this.dialog.find('#pc-prompt-list');
+
+        listEl.on('click', '.pc-btn-toggle', (e) => {
+            e.stopPropagation();
+            const id = $(e.currentTarget).data('id');
+            const item = this.transactionalState.promptOrder.find(o => o.identifier === id);
+            if (item) {
+                item.enabled = !item.enabled;
+                this._dirty = true;
+                this.updateListUI();
+                this.updateRightPane();
+            }
+        });
+
+        listEl.on('click', '.pc-btn-remove', (e) => {
+            e.stopPropagation();
+            const id = $(e.currentTarget).data('id');
+            const idx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
+            if (idx > -1) {
+                const promptMap = new Map(this.transactionalState.prompts.map(p => [p.identifier, p]));
+                const prompt = promptMap.get(id);
+                // Only remove from promptOrder so it moves back to the import modal pool
+                this.transactionalState.promptOrder.splice(idx, 1);
+
+                if (this.editTargetId === id) {
+                    this.editTargetId = null;
+                }
+                this._dirty = true;
+                this.updateListUI();
+                this.updateRightPane();
+                toastr.info(`已将 "${prompt?.name || id}" 从列表移除（可在"引入条目"中找回）`);
+            }
+        });
+
+        listEl.on('click', '.pc-var-badge', (e) => {
+            e.stopPropagation();
+            const badge = $(e.currentTarget);
+            const card = badge.closest('.pc-prompt-card');
+            const id = card.data('id');
+            const type = badge.data('type');
+            const varName = badge.data('varname');
+            const varValue = badge.data('varvalue');
+
+            this.editTargetId = id;
+            this.mobileShowRight = true;
+            this.updateRightPane();
+
+            const textarea = this.dialog.find('#pc-edit-content')[0];
+            if (textarea) {
+                const text = textarea.value;
+                let regex;
+                if (type === 'setvar' || type === 'addvar') {
+                    regex = new RegExp(`(\\{\\{${type}::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
+                } else {
+                    regex = new RegExp(`(\\{\\{getvar::\\s*)(${escapeRegExp(String(varName))})(\\s*\\}\\})`);
+                }
+
+                const match = regex.exec(text);
+                if (match) {
+                    const valueStartIndex = match.index + match[1].length;
+                    const valueEndIndex = valueStartIndex + match[2].length;
+                    textarea.focus();
+                    textarea.setSelectionRange(valueStartIndex, valueEndIndex);
+                }
+            }
+        });
+
+        listEl.on('click', '.pc-prompt-card', (e) => {
+            if (listEl.hasClass('is-dragging')) return;
+            // Ignore if click originated from a button or badge inside the card
+            if ($(e.target).closest('.pc-btn-toggle, .pc-btn-remove, .pc-var-badge, .pc-card-id').length) return;
+            this.editTargetId = $(e.currentTarget).data('id');
+            this.showOverview = false;
+            this.mobileShowRight = true;
+            this.updateRightPane();
+        });
+
         this.updateListUI();
         this.updateRightPane();
 
@@ -209,31 +564,34 @@ class PCManagerCore {
         const isSearching = searchTerm.length > 0;
         listEl.empty();
 
+        // Build prompt Map for O(1) lookups
+        const promptMap = new Map(this.transactionalState.prompts.map(p => [p.identifier, p]));
         const globalVars = {};
         let itemIndex = 1;
 
         for (const orderItem of this.transactionalState.promptOrder) {
-            const prompt = this.transactionalState.prompts.find(p => p.identifier === orderItem.identifier);
+            const prompt = promptMap.get(orderItem.identifier);
             if (!prompt) {
                 itemIndex++;
                 continue;
             }
 
             const currentIndex = itemIndex++;
+            const text = getPromptText(prompt);
 
             if (isSearching) {
                 const nameMatch = prompt.name?.toLowerCase().includes(searchTerm);
-                const contentMatch = (prompt.content || prompt.prompt || '').toLowerCase().includes(searchTerm);
+                const contentMatch = text.toLowerCase().includes(searchTerm);
                 if (!nameMatch && !contentMatch) continue;
             }
 
-            const macros = this.extractMacros(prompt.content || prompt.prompt || '');
+            const macros = this.extractMacros(text);
             const macroHtml = macros.map(m => {
                 const displayStr = m.length > 20 ? m.substring(0, 20) + '...' : m;
                 return `<span class="pc-macro-badge" title="${escapeHtml(m)}"><i class="fa-solid fa-comment-dots"></i> ${escapeHtml(displayStr)}</span>`;
             }).join('');
 
-            const vars = this.extractVars(prompt.content || prompt.prompt || '');
+            const vars = this.extractVars(text);
             let varHtmlElements = [];
 
             for (const v of vars) {
@@ -242,7 +600,7 @@ class PCManagerCore {
                         globalVars[v.name] = v.value;
                     }
                     varHtmlElements.push(
-                        `<span class="pc-var-badge pc-setvar-badge" data-type="setvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
+                        `<span class="pc-var-badge pc-setvar-badge" data-type="setvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
                     );
                 } else if (v.type === 'addvar') {
                     if (orderItem.enabled) {
@@ -261,17 +619,15 @@ class PCManagerCore {
                         }
                     }
                     varHtmlElements.push(
-                        `<span class="pc-var-badge pc-addvar-badge" data-type="addvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}" style="cursor: pointer; font-size: 0.75rem; background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-plus-square"></i> ${escapeHtml(v.name)}</span>`
+                        `<span class="pc-var-badge pc-addvar-badge" data-type="addvar" data-varname="${escapeHtml(v.name)}" data-varvalue="${escapeHtml(v.value)}" title="${escapeHtml(v.value)}"><i class="fa-solid fa-plus-square"></i> ${escapeHtml(v.name)}</span>`
                     );
                 } else if (v.type === 'getvar') {
                     const currentValue = globalVars[v.name];
                     const isUnset = currentValue === undefined;
                     const displayValue = isUnset ? 'Unset' : currentValue;
-                    const bgClass = isUnset ? 'rgba(239, 68, 68, 0.2)' : 'rgba(59, 130, 246, 0.2)';
-                    const textClass = isUnset ? '#f87171' : '#60a5fa';
 
                     varHtmlElements.push(
-                        `<span class="pc-var-badge pc-getvar-badge" data-type="getvar" data-varname="${escapeHtml(v.name)}" title="${escapeHtml(displayValue)}" style="cursor: pointer; font-size: 0.75rem; background: ${bgClass}; color: ${textClass}; padding: 2px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
+                        `<span class="pc-var-badge pc-getvar-badge${isUnset ? ' pc-var-unset' : ''}" data-type="getvar" data-varname="${escapeHtml(v.name)}" title="${escapeHtml(displayValue)}"><i class="fa-solid fa-cube"></i> ${escapeHtml(v.name)}</span>`
                     );
                 }
             }
@@ -287,7 +643,7 @@ class PCManagerCore {
                 </div>
                 <div class="pc-card-header">
                     <span class="pc-card-title">
-                        <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 6px; max-width: 100%;">
+                        <div class="pc-card-title-row">
                             <span class="pc-card-name">${escapeHtml(prompt.name)}</span>
                             ${setVarHtml}
                         </div>
@@ -295,10 +651,10 @@ class PCManagerCore {
                     </span>
                 </div>
                 <div class="pc-card-macros">${macroHtml}</div>
-                <div class="pc-card-controls" style="display: flex; align-items: center; gap: 8px;">
+                <div class="pc-card-controls">
                     <span class="pc-role-badge role-${prompt.role || 'system'}">${escapeHtml(prompt.role || 'system')}</span>
                     <button class="pc-btn-toggle" data-id="${prompt.identifier}" title="Toggle Prompt">${orderItem.enabled ? '<i class="fa-solid fa-toggle-on"></i> ' : '<i class="fa-solid fa-toggle-off"></i> '}</button>
-                    <button class="pc-btn-remove" data-id="${prompt.identifier}" title="从当前列表中移除" style="background: rgba(239, 68, 68, 0.1); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.2); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 0.8rem; display: inline-flex; align-items: center; gap: 4px;"><i class="fa-solid fa-trash-can"></i></button>
+                    <button class="pc-btn-remove" data-id="${prompt.identifier}" title="从当前列表中移除"><i class="fa-solid fa-trash-can"></i></button>
                 </div>
             `;
             listEl.append(card);
@@ -331,86 +687,15 @@ class PCManagerCore {
                 },
                 update: (event, ui) => {
                     const newOrderIds = listEl.sortable('toArray', { attribute: 'data-id' });
+                    const orderMap = new Map(this.transactionalState.promptOrder.map(o => [o.identifier, o]));
                     this.transactionalState.promptOrder = newOrderIds.map(id => {
-                        return this.transactionalState.promptOrder.find(o => o.identifier === id);
+                        return orderMap.get(id);
                     }).filter(Boolean);
+                    this._dirty = true;
                     this.updateRightPane();
                 }
             });
         }
-
-        // Event Listeners
-        listEl.find('.pc-btn-toggle').on('click', (e) => {
-            e.stopPropagation();
-            const id = $(e.currentTarget).data('id');
-            const item = this.transactionalState.promptOrder.find(o => o.identifier === id);
-            if (item) {
-                item.enabled = !item.enabled;
-                this.updateListUI();
-                this.updateRightPane();
-            }
-        });
-
-        listEl.find('.pc-btn-remove').on('click', (e) => {
-            e.stopPropagation();
-            const id = $(e.currentTarget).data('id');
-            const idx = this.transactionalState.promptOrder.findIndex(o => o.identifier === id);
-            if (idx > -1) {
-                const prompt = this.transactionalState.prompts.find(p => p.identifier === id);
-                // Only remove from promptOrder so it moves back to the import modal pool
-                this.transactionalState.promptOrder.splice(idx, 1);
-
-                if (this.editTargetId === id) {
-                    this.editTargetId = null;
-                }
-                this.updateListUI();
-                this.updateRightPane();
-                toastr.info(`已将 "${prompt?.name || id}" 从列表移除（可在“引入条目”中找回）`);
-            }
-        });
-
-        const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-        listEl.find('.pc-var-badge').on('click', (e) => {
-            e.stopPropagation();
-            const badge = $(e.currentTarget);
-            const card = badge.closest('.pc-prompt-card');
-            const id = card.data('id');
-            const type = badge.data('type');
-            const varName = badge.data('varname');
-            const varValue = badge.data('varvalue');
-
-            this.editTargetId = id;
-            this.mobileShowRight = true;
-            this.updateRightPane();
-
-            const textarea = this.dialog.find('#pc-edit-content')[0];
-            if (textarea) {
-                const text = textarea.value;
-                let regex;
-                if (type === 'setvar' || type === 'addvar') {
-                    regex = new RegExp(`(\\{\\{${type}::\\s*${escapeRegExp(String(varName))}\\s*::\\s*)(${escapeRegExp(String(varValue))})(\\s*\\}\\})`);
-                } else {
-                    regex = new RegExp(`(\\{\\{getvar::\\s*)(${escapeRegExp(String(varName))})(\\s*\\}\\})`);
-                }
-
-                const match = regex.exec(text);
-                if (match) {
-                    const valueStartIndex = match.index + match[1].length;
-                    const valueEndIndex = valueStartIndex + match[2].length;
-                    textarea.focus();
-                    textarea.setSelectionRange(valueStartIndex, valueEndIndex);
-                }
-            }
-        });
-
-        listEl.find('.pc-prompt-card').on('click', (e) => {
-            if (listEl.hasClass('is-dragging')) return;
-            this.editTargetId = $(e.currentTarget).data('id');
-            this.showOverview = false;
-            this.mobileShowRight = true;
-            this.updateRightPane();
-        });
     }
 
     updateRightPane() {
@@ -458,16 +743,16 @@ class PCManagerCore {
 
     renderOverview() {
         const overviewEl = this.dialog.find('#pc-overview-area');
-        const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples'];
+        const promptMap = new Map(this.transactionalState.prompts.map(p => [p.identifier, p]));
 
         let html = `
-        <div class="pc-editor-header" style="margin-bottom: 12px; flex-shrink: 0; display: flex; justify-content: space-between; align-items: center;">
+        <div class="pc-editor-header pc-overview-header">
             <h3 style="margin: 0;">提示词全览</h3>
-            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; color: var(--SmartThemeBodyColor); background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1); padding: 4px 10px; border-radius: 6px; border: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.3);">
+            <label class="pc-macro-toggle-label">
                 <input type="checkbox" id="pc-toggle-macro" ${this.macroMode ? 'checked' : ''} style="margin: 0;"> 宏解析模式
             </label>
         </div>
-        <div class="pc-overview-content" style="display: flex; flex-direction: column; gap: 12px; padding-bottom: 20px; overflow-y: auto; flex: 1; padding-right: 8px;">`;
+        <div class="pc-overview-content">`;
 
         let hasEnabled = false;
         const localVars = {}; // Holds vars for Macro Mode
@@ -476,87 +761,92 @@ class PCManagerCore {
             if (!orderItem.enabled) continue;
             hasEnabled = true;
 
-            const prompt = this.transactionalState.prompts.find(p => p.identifier === orderItem.identifier);
+            const prompt = promptMap.get(orderItem.identifier);
             if (!prompt) continue;
 
-            const isCore = CORE_IDS.includes(prompt.identifier) || prompt.identifier === 'chatHistory';
-            const roleColorMap = {
-                system: 'var(--SmartThemeQuoteColor, #60a5fa)',
-                user: 'var(--SmartThemeBodyColor, #34d399)',
-                assistant: 'var(--SmartThemeQuoteColor, #a78bfa)'
-            };
-            const roleColor = roleColorMap[prompt.role] || 'var(--SmartThemeQuoteColor)';
+            const isCore = CORE_IDS.has(prompt.identifier) || prompt.identifier === 'chatHistory';
+            const roleColor = ROLE_COLOR_MAP[prompt.role] || 'var(--SmartThemeQuoteColor)';
 
-            html += `<div class="pc-overview-item" data-id="${prompt.identifier}" style="background: rgba(var(--SmartThemeBodyColorRgb, 200, 200, 200), 0.04); border: 1px solid var(--SmartThemeBorderColor); border-radius: 8px; overflow: hidden; text-align: left; cursor: pointer; transition: all 0.2s ease;">
-                <div style="background: rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.08); border-bottom: 1px solid rgba(var(--SmartThemeQuoteColorRgb, 100, 180, 255), 0.1); padding: 6px 12px; font-size: 0.85rem; font-weight: 700; color: var(--SmartThemeBodyColor); display: flex; justify-content: space-between; text-align: left;">
+            html += `<div class="pc-overview-item" data-id="${prompt.identifier}">
+                <div class="pc-overview-item-header">
                     <span>${escapeHtml(prompt.name)}</span>
-                    <span style="opacity: 0.8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem; color: ${roleColor};">${escapeHtml(prompt.role || 'system')}</span>
+                    <span class="pc-role-indicator" style="color: ${roleColor};">${escapeHtml(prompt.role || 'system')}</span>
                 </div>
-                <div style="padding: 12px; font-size: 0.9rem; white-space: pre-wrap; font-family: 'JetBrains Mono', 'Courier New', Courier, monospace; opacity: 0.9; color: var(--SmartThemeBodyColor); word-break: break-word;">`;
+                <div class="pc-overview-item-body">`;
 
             if (isCore) {
-                html += `<span style="color: var(--SmartThemeQuoteColor, #60a5fa); opacity: 0.8;">{{SillyTavern Prompt #${escapeHtml(prompt.identifier)}}}</span>`;
+                html += `<span class="pc-core-placeholder">{{SillyTavern Prompt #${escapeHtml(prompt.identifier)}}}</span>`;
             } else {
-                let text = prompt.content || prompt.prompt || '';
+                let text = getPromptText(prompt);
                 if (this.macroMode) {
-                    let escapedText = escapeHtml(text);
-                    escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}|\{\{setvar::(.*?)::([\s\S]*?)\}\}|\{\{addvar::(.*?)::([\s\S]*?)\}\}|\{\{getvar::([\s\S]*?)\}\}/g, (match, commentGroup, setvarName, setvarVal, addvarName, addvarVal, getvarName) => {
-                        if (commentGroup !== undefined) {
-                            return ''; // Remove comment
-                        } else if (setvarName !== undefined) {
-                            localVars[setvarName.trim()] = setvarVal.trim();
-                            return ''; // Remove setvar
-                        } else if (addvarName !== undefined) {
-                            const varName = addvarName.trim();
-                            const val = addvarVal.trim();
-                            if (localVars[varName] !== undefined) {
-                                const currNum = Number(localVars[varName]);
-                                const addNum = Number(val);
-                                if (!isNaN(currNum) && !isNaN(addNum) && val !== '' && localVars[varName] !== '') {
-                                    localVars[varName] = String(currNum + addNum);
-                                } else {
-                                    localVars[varName] += val;
-                                }
-                            } else {
-                                localVars[varName] = val;
-                            }
-                            return ''; // Remove addvar
-                        } else if (getvarName !== undefined) {
-                            const varName = getvarName.trim();
-                            const val = localVars[varName] !== undefined ? localVars[varName] : '';
-                            return val ? `<span style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; padding: 0 4px; border-radius: 4px; border-bottom: 1px dashed rgba(59, 130, 246, 0.5);" title="变量已解析: ${varName}">${val}</span>` : '';
-                        }
-                        return match;
+                    // Step 1: Extract and track setvar/addvar/getvar BEFORE ST macro resolution
+                    // so PCM's cross-prompt var accumulation still works correctly.
+                    text = text.replace(/\{\{setvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
+                        localVars[name.trim()] = val.trim();
+                        return ''; // Remove setvar from output
                     });
-                    
-                    // Process {{trim}} (remove macro and adjacent newlines)
+                    text = text.replace(/\{\{addvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
+                        const varName = name.trim();
+                        const addVal = val.trim();
+                        if (localVars[varName] !== undefined) {
+                            const currNum = Number(localVars[varName]);
+                            const addNum = Number(addVal);
+                            if (!isNaN(currNum) && !isNaN(addNum) && addVal !== '' && localVars[varName] !== '') {
+                                localVars[varName] = String(currNum + addNum);
+                            } else {
+                                localVars[varName] += addVal;
+                            }
+                        } else {
+                            localVars[varName] = addVal;
+                        }
+                        return ''; // Remove addvar from output
+                    });
+                    text = text.replace(/\{\{getvar::([\s\S]*?)\}\}/g, (match, name) => {
+                        const varName = name.trim();
+                        return localVars[varName] !== undefined ? localVars[varName] : '';
+                    });
+                    // Remove comments
+                    text = text.replace(/\{\{\/\/[\s\S]*?\}\}/g, '');
+
+                    // Step 2: Use ST's native substituteParams to resolve ALL remaining macros
+                    // ({{char}}, {{user}}, {{time}}, {{persona}}, custom registered macros, etc.)
+                    try {
+                        text = substituteParams(text);
+                    } catch (e) {
+                        console.warn('PCManager: substituteParams failed for prompt', prompt.identifier, e);
+                    }
+
+                    // Step 3: Escape for HTML display and render resolved getvar values with highlight
+                    let escapedText = escapeHtml(text);
+
+                    // Process {{trim}} leftovers (remove macro and adjacent newlines)
                     escapedText = escapedText.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
                     html += escapedText;
                 } else {
                     let escapedText = escapeHtml(text);
                     // Highlight setvar (green)
                     escapedText = escapedText.replace(/\{\{setvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
-                        return `<span style="background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{setvar::${name}::${val}}}</span>`;
+                        return `<span class="pc-hl-setvar">{{setvar::${name}::${val}}}</span>`;
                     });
                     // Highlight addvar (orange)
                     escapedText = escapedText.replace(/\{\{addvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
-                        return `<span style="background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{addvar::${name}::${val}}}</span>`;
+                        return `<span class="pc-hl-addvar">{{addvar::${name}::${val}}}</span>`;
                     });
                     // Highlight getvar (blue)
                     escapedText = escapedText.replace(/\{\{getvar::([\s\S]*?)\}\}/g, (match, name) => {
-                        return `<span style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{getvar::${name}}}</span>`;
+                        return `<span class="pc-hl-getvar">{{getvar::${name}}}</span>`;
                     });
                     // Highlight trim (purple)
-                    escapedText = escapedText.replace(/\{\{trim\}\}/g, (match) => {
-                        return `<span style="background: rgba(168, 85, 247, 0.2); color: #c084fc; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{trim}}</span>`;
+                    escapedText = escapedText.replace(/\{\{trim\}\}/g, () => {
+                        return `<span class="pc-hl-trim">{{trim}}</span>`;
                     });
                     // Highlight comments (gray)
                     escapedText = escapedText.replace(/\{\{\/\/([\s\S]*?)\}\}/g, (match, content) => {
-                        return `<span style="background: rgba(156, 163, 175, 0.2); color: #9ca3af; padding: 2px 4px; border-radius: 4px; font-style: italic;">{{//${content}}}</span>`;
+                        return `<span class="pc-hl-comment">{{//${content}}}</span>`;
                     });
                     // Highlight all other ST macros (teal/cyan)
                     escapedText = escapedText.replace(/\{\{(?!setvar|addvar|getvar|trim|\/\/)(.*?)\}\}/g, (match, macroContent) => {
-                        return `<span style="background: rgba(20, 184, 166, 0.15); color: #14b8a6; padding: 2px 4px; border-radius: 4px; font-weight: 600;">{{${macroContent}}}</span>`;
+                        return `<span class="pc-hl-macro">{{${macroContent}}}</span>`;
                     });
                     html += escapedText;
                 }
@@ -572,17 +862,8 @@ class PCManagerCore {
         html += '</div>';
         overviewEl.html(html);
 
-        overviewEl.find('.pc-overview-item').on('mouseenter', function () {
-            $(this).css({
-                'border-color': 'var(--SmartThemeQuoteColor)',
-                'box-shadow': '0 4px 12px rgba(0,0,0,0.1)'
-            });
-        }).on('mouseleave', function () {
-            $(this).css({
-                'border-color': 'var(--SmartThemeBorderColor)',
-                'box-shadow': 'none'
-            });
-        }).on('click', (e) => {
+        // Hover is now handled by CSS (.pc-overview-item:hover)
+        overviewEl.find('.pc-overview-item').on('click', (e) => {
             const id = $(e.currentTarget).data('id');
             this.editTargetId = id;
             this.showOverview = false;
@@ -607,9 +888,9 @@ class PCManagerCore {
         }
 
         let html = `
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <div class="pc-diff-header">
             <h3 style="margin: 0;">Staged Changes</h3>
-            <button id="pc-btn-undo-all" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); padding: 4px 10px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; font-weight: 600; display: flex; align-items: center; gap: 6px; transition: all 0.2s ease;">
+            <button id="pc-btn-undo-all" class="pc-btn-undo-all">
                 <i class="fa-solid fa-rotate-left"></i> 撤销全部
             </button>
         </div>
@@ -629,6 +910,7 @@ class PCManagerCore {
                 prompts: structuredClone(this.originalState.prompts),
                 promptOrder: structuredClone(this.originalState.promptOrder),
             };
+            this._dirty = true;
             this.updateListUI();
             this.updateRightPane();
             toastr.success('已撤销所有未提交的更改');
@@ -669,13 +951,15 @@ class PCManagerCore {
             }
         }
 
+        this._dirty = true;
         this.updateListUI();
         this.updateRightPane();
     }
 
     renderEditForm() {
         const editEl = this.dialog.find('#pc-edit-area');
-        const prompt = this.transactionalState.prompts.find(p => p.identifier === this.editTargetId);
+        const promptMap = new Map(this.transactionalState.prompts.map(p => [p.identifier, p]));
+        const prompt = promptMap.get(this.editTargetId);
 
         if (!prompt) {
             this.editTargetId = null;
@@ -683,15 +967,14 @@ class PCManagerCore {
             return;
         }
 
-        const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples'];
-        const isCore = CORE_IDS.includes(prompt.identifier);
+        const isCore = CORE_IDS.has(prompt.identifier);
         const isHistory = prompt.identifier === 'chatHistory';
 
         editEl.html(`
             <div class="pc-editor-header">
                 <h3>编辑: ${escapeHtml(prompt.name)}</h3>
             </div>
-            ${(isCore || isHistory) ? '<div style="color: #ef4444; font-size: 0.8rem; margin-bottom: 12px; padding: 8px; background: rgba(239, 68, 68, 0.1); border-radius: 6px;"><i class="fa-solid fa-triangle-exclamation"></i> 此条目为系统关键设定，部分内容已被锁定以防破坏内部注入逻辑。</div>' : ''}
+            ${(isCore || isHistory) ? '<div class="pc-core-warning"><i class="fa-solid fa-triangle-exclamation"></i> 此条目为系统关键设定，部分内容已被锁定以防破坏内部注入逻辑。</div>' : ''}
             <div class="pc-form-group">
                 <label>名称</label>
                 <input type="text" class="pc-form-control" id="pc-edit-name" value="${escapeHtml(prompt.name)}">
@@ -717,9 +1000,9 @@ class PCManagerCore {
             </div>
             <div class="pc-form-group">
                 <label>提示词</label>
-                <textarea class="pc-form-control" id="pc-edit-content" rows="10" ${(isCore || isHistory) ? 'disabled' : ''}>${escapeHtml(prompt.content || prompt.prompt || '')}</textarea>
+                <textarea class="pc-form-control" id="pc-edit-content" rows="10" ${(isCore || isHistory) ? 'disabled' : ''}>${escapeHtml(getPromptText(prompt))}</textarea>
             </div>
-            <div class="pc-editor-footer" style="display: flex; gap: 8px; justify-content: flex-start; margin-top: 16px;">
+            <div class="pc-editor-footer">
                 <button class="pc-btn-icon pc-btn-icon-primary" id="pc-btn-save-edit" title="Save to Staging"><i class="fa-solid fa-save"></i> 保存</button>
                 <button class="pc-btn-icon pc-btn-close-edit" title="Close Editor"><i class="fa-solid fa-times"></i> 关闭</button>
             </div>
@@ -760,6 +1043,7 @@ class PCManagerCore {
 
             this.editTargetId = null;
             this.mobileShowRight = false;
+            this._dirty = true;
             this.updateListUI();
             this.updateRightPane();
         });
@@ -768,9 +1052,8 @@ class PCManagerCore {
     async commitState() {
         if (this.diffs.length === 0) return;
 
-        const CORE_IDS = ['worldInfoBefore', 'worldInfoAfter', 'charDescription', 'charPersonality', 'scenario', 'dialogueExamples', 'chatHistory', 'main'];
         for (const p of this.transactionalState.prompts) {
-            if (!CORE_IDS.includes(p.identifier)) {
+            if (!CORE_IDS_WITH_MAIN.has(p.identifier)) {
                 if (p.system_prompt === undefined) p.system_prompt = false;
                 if (p.marker === undefined) p.marker = false;
             }
@@ -802,6 +1085,7 @@ class PCManagerCore {
         toastr.success('PCManager: Changes committed.');
 
         this.diffs = [];
+        this._dirty = true;
         this.mobileShowRight = false;
         this.cloneState();
         this.updateListUI();
@@ -829,6 +1113,7 @@ class PCManagerCore {
         this.editTargetId = newId;
         this.showOverview = false;
         this.mobileShowRight = true;
+        this._dirty = true;
         this.updateListUI();
         this.updateRightPane();
 
@@ -848,6 +1133,9 @@ class PCManagerCore {
             toastr.info('提示词库中的所有条目均已在当前列表中');
             return;
         }
+
+        // Build a Map for O(1) lookups in the import modal
+        const availableMap = new Map(availablePrompts.map(p => [p.identifier, p]));
 
         const modalContent = document.createElement('div');
         modalContent.className = 'pc-import-modal';
@@ -871,10 +1159,10 @@ class PCManagerCore {
                         <small class="pc-import-id" title="#${escapeHtml(prompt.identifier)} (${escapeHtml(prompt.role || 'system')})">#${escapeHtml(prompt.identifier)} (${escapeHtml(prompt.role || 'system')})</small>
                     </div>
                     <div class="pc-import-actions">
-                        <button class="pc-btn-add-to-order" data-id="${prompt.identifier}" style="background: rgba(59, 130, 246, 0.2); color: #60a5fa; border: 1px solid rgba(59, 130, 246, 0.4); padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 600;">
+                        <button class="pc-btn-add-to-order pc-import-btn-add" data-id="${prompt.identifier}">
                             <i class="fa-solid fa-arrow-up-from-bracket"></i> 放入
                         </button>
-                        <button class="pc-btn-delete-permanently" data-id="${prompt.identifier}" style="background: rgba(239, 68, 68, 0.2); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.4); padding: 6px 10px; border-radius: 4px; cursor: pointer; font-size: 0.85rem; display: flex; align-items: center; gap: 6px; font-weight: 600;" title="彻底从提示词库中删除此条目">
+                        <button class="pc-btn-delete-permanently pc-import-btn-delete" data-id="${prompt.identifier}" title="彻底从提示词库中删除此条目">
                             <i class="fa-solid fa-trash"></i> 移除
                         </button>
                     </div>
@@ -898,9 +1186,10 @@ class PCManagerCore {
 
         $modal.find('.pc-btn-add-to-order').on('click', (e) => {
             const id = $(e.currentTarget).data('id');
-            const promptToAdd = availablePrompts.find(p => p.identifier === id);
+            const promptToAdd = availableMap.get(id);
             if (promptToAdd) {
                 this.transactionalState.promptOrder.unshift({ identifier: id, enabled: true });
+                this._dirty = true;
                 this.updateListUI();
                 this.updateRightPane();
                 toastr.success(`已将 "${promptToAdd.name}" 放入最顶层`);
@@ -945,6 +1234,7 @@ class PCManagerCore {
                     this.editTargetId = null;
                 }
 
+                this._dirty = true;
                 this.updateListUI();
                 this.updateRightPane();
                 toastr.success(`已彻底删除条目 "${promptName}" 并自动保存预设`);
