@@ -247,6 +247,69 @@ const PCM_INJECTED_STYLES = `
     align-items: center;
     margin-bottom: 12px;
 }
+/* ── PCManager header & mobile layout ── */
+.pc-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    min-width: 0;
+}
+.pc-header h2 {
+    margin: 0;
+    white-space: nowrap;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.pc-header-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+    flex-wrap: wrap;
+}
+/* Close button always visible */
+#pc-btn-close {
+    flex-shrink: 0;
+}
+@media (max-width: 600px) {
+    .pc-header {
+        gap: 6px;
+    }
+    .pc-header h2 {
+        font-size: 1rem;
+        flex: 1 1 auto;
+    }
+    .pc-header h2 span {
+        display: none;
+    }
+    .pc-header-controls {
+        gap: 4px;
+        flex-wrap: nowrap;
+    }
+    /* Hide button text, show only icons on mobile */
+    #pc-btn-view-overview,
+    #pc-btn-view-staged,
+    #pc-btn-commit {
+        font-size: 0;
+        padding: 6px 8px;
+    }
+    #pc-btn-view-overview i,
+    #pc-btn-view-staged i,
+    #pc-btn-commit i,
+    #pc-btn-view-staged span {
+        font-size: 0.85rem;
+    }
+    /* Toolbar: stack search and buttons */
+    .pc-toolbar {
+        flex-wrap: wrap;
+    }
+    .pc-toolbar-search-wrap {
+        flex: 1 1 100%;
+    }
+}
 /* Syntax highlight spans in overview */
 .pc-hl-setvar { background: rgba(16, 185, 129, 0.2); color: #34d399; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
 .pc-hl-addvar { background: rgba(245, 158, 11, 0.2); color: #f59e0b; padding: 2px 4px; border-radius: 4px; font-weight: 600; }
