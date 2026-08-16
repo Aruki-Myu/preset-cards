@@ -779,6 +779,10 @@ class PCManagerCore {
             } else {
                 let text = getPromptText(prompt);
                 if (this.macroMode) {
+                    // Unicode PUA markers to track macro-resolved text through escapeHtml
+                    const M_S = '\uE000'; // marker start
+                    const M_E = '\uE001'; // marker end
+
                     // Step 1: Extract and track setvar/addvar/getvar BEFORE ST macro resolution
                     // so PCM's cross-prompt var accumulation still works correctly.
                     text = text.replace(/\{\{setvar::(.*?)::([\s\S]*?)\}\}/g, (match, name, val) => {
@@ -801,26 +805,33 @@ class PCManagerCore {
                         }
                         return ''; // Remove addvar from output
                     });
+                    // Resolve getvar and wrap in markers for highlighting
                     text = text.replace(/\{\{getvar::([\s\S]*?)\}\}/g, (match, name) => {
                         const varName = name.trim();
-                        return localVars[varName] !== undefined ? localVars[varName] : '';
+                        const val = localVars[varName] !== undefined ? localVars[varName] : '';
+                        return val ? `${M_S}${val}${M_E}` : '';
                     });
                     // Remove comments
                     text = text.replace(/\{\{\/\/[\s\S]*?\}\}/g, '');
 
                     // Step 2: Use ST's native substituteParams to resolve ALL remaining macros
-                    // ({{char}}, {{user}}, {{time}}, {{persona}}, custom registered macros, etc.)
+                    // postProcessFn wraps each resolved value in PUA markers for highlighting
                     try {
-                        text = substituteParams(text);
+                        text = substituteParams(text, {
+                            postProcessFn: (resolved) => resolved ? `${M_S}${resolved}${M_E}` : resolved,
+                        });
                     } catch (e) {
                         console.warn('PCManager: substituteParams failed for prompt', prompt.identifier, e);
                     }
 
-                    // Step 3: Escape for HTML display and render resolved getvar values with highlight
+                    // Step 3: Escape for HTML display, then convert PUA markers to highlight spans
                     let escapedText = escapeHtml(text);
 
                     // Process {{trim}} leftovers (remove macro and adjacent newlines)
                     escapedText = escapedText.replace(/(?:\r?\n)*\{\{trim\}\}(?:\r?\n)*/gi, '');
+
+                    // Replace PUA markers with visible highlight spans
+                    escapedText = escapedText.replace(/\uE000([\s\S]*?)\uE001/g, '<span class="pc-hl-resolved">$1</span>');
                     html += escapedText;
                 } else {
                     let escapedText = escapeHtml(text);
